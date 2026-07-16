@@ -11,6 +11,6 @@ func RegisterLeadRoutes(api *gin.RouterGroup, leadHandler *handlers.LeadHandler)
 	{
 		leads.GET("", leadHandler.GetAllLeads)
 		leads.POST("", leadHandler.CreateLead)
-
+		leads.POST("/api/terreno-leads", leadHandler.CreateTerrainLead)
 	}
 }
