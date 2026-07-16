@@ -1,0 +1,36 @@
+# Variables de entorno
+.env
+.env.*
+!.env.example
+
+# Compilaciones de Go
+bin/
+build/
+dist/
+tmp/
+
+# Ejecutables
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Archivos de pruebas
+*.test
+*.out
+
+# Cobertura
+coverage.out
+coverage.html
+
+# Logs
+*.log
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Editores
+.vscode/
+.idea/
