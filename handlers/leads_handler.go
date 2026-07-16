@@ -20,26 +20,41 @@ func NewLeadHandler(db *pgxpool.Pool) *LeadHandler {
 }
 
 type CreateLeadRequest struct {
-	FullName          string `json:"fullName"`
-	NombresCompletos  string `json:"nombres_completos"`
-	Phone             string `json:"phone"`
-	Telefono          string `json:"telefono"`
-	Email             string `json:"email"`
-	Message           string `json:"message"`
-	Mensaje           string `json:"mensaje"`
-	Project           string `json:"project"`
-	CategoriaInteres  string `json:"categoria_interes"`
-	ProyectoID        string `json:"proyecto_id"`
-	Campaign          string `json:"campaign"`
-	CampaniaSlug      string `json:"campania_slug"`
-	CampaniaNombre    string `json:"campania_nombre"`
-	OrigenRuta        string `json:"origen_ruta"`
-	OrigenComponente  string `json:"origen_componente"`
+	FullName         string `json:"fullName"`
+	NombresCompletos string `json:"nombres_completos"`
+
+	Phone    string `json:"phone"`
+	Telefono string `json:"telefono"`
+
+	Email string `json:"email"`
+
+	Message string `json:"message"`
+	Mensaje string `json:"mensaje"`
+
+	// Nombre visible del proyecto.
+	Project         string `json:"project"`
+	ProyectoInteres string `json:"proyecto_interes"`
+
+	// Categoría, tipología o motivo de interés.
+	Interest         string `json:"interest"`
+	CategoriaInteres string `json:"categoria_interes"`
+
+	// UUID opcional del proyecto.
+	ProjectID  string `json:"projectId"`
+	ProyectoID string `json:"proyecto_id"`
+
+	Campaign       string `json:"campaign"`
+	CampaniaSlug   string `json:"campania_slug"`
+	CampaniaNombre string `json:"campania_nombre"`
+
+	OrigenRuta       string `json:"origen_ruta"`
+	OrigenComponente string `json:"origen_componente"`
 }
 
 type LeadResponse struct {
 	ID                string    `json:"id"`
-	NombresCompletos string    `json:"nombres_completos"`
+	NombresCompletos  string    `json:"nombres_completos"`
+	ProyectoInteres   string    `json:"proyecto_interes"`
 	Telefono          string    `json:"telefono"`
 	Email             string    `json:"email"`
 	Mensaje           string    `json:"mensaje"`
@@ -55,14 +70,15 @@ type LeadResponse struct {
 	TipoProyecto   string `json:"tipo_proyecto"`
 	Ubicacion      string `json:"ubicacion"`
 	EstadoLead     string `json:"estado_lead"`
-	Asesor          string `json:"asesor"`
-	CampaniaNombre  string `json:"campania_nombre"`
-	CampaniaSlug    string `json:"campania_slug"`
+	Asesor         string `json:"asesor"`
+	CampaniaNombre string `json:"campania_nombre"`
+	CampaniaSlug   string `json:"campania_slug"`
 }
 
 func firstValue(values ...string) string {
 	for _, value := range values {
 		cleanValue := strings.TrimSpace(value)
+
 		if cleanValue != "" {
 			return cleanValue
 		}
@@ -72,9 +88,15 @@ func firstValue(values ...string) string {
 }
 
 func cleanPhone(phone string) string {
-	phone = strings.ReplaceAll(phone, " ", "")
-	phone = strings.ReplaceAll(phone, "-", "")
-	return phone
+	var builder strings.Builder
+
+	for _, character := range phone {
+		if character >= '0' && character <= '9' {
+			builder.WriteRune(character)
+		}
+	}
+
+	return builder.String()
 }
 
 func (h *LeadHandler) CreateLead(c *gin.Context) {
@@ -92,17 +114,62 @@ func (h *LeadHandler) CreateLead(c *gin.Context) {
 		return
 	}
 
-	nombresCompletos := firstValue(body.NombresCompletos, body.FullName)
-	telefono := cleanPhone(firstValue(body.Telefono, body.Phone))
-	email := strings.ToLower(firstValue(body.Email))
-	mensaje := firstValue(body.Mensaje, body.Message)
+	nombresCompletos := firstValue(
+		body.NombresCompletos,
+		body.FullName,
+	)
 
-	categoriaInteres := firstValue(body.CategoriaInteres, body.Project)
-	campaniaSlug := firstValue(body.CampaniaSlug, body.Campaign, "formulario-web-general")
-	campaniaNombre := firstValue(body.CampaniaNombre, campaniaSlug)
+	telefono := cleanPhone(
+		firstValue(
+			body.Telefono,
+			body.Phone,
+		),
+	)
 
-	origenRuta := firstValue(body.OrigenRuta, c.GetHeader("Referer"))
-	origenComponente := firstValue(body.OrigenComponente, "Formulario web")
+	email := strings.ToLower(
+		firstValue(body.Email),
+	)
+
+	mensaje := firstValue(
+		body.Mensaje,
+		body.Message,
+	)
+
+	proyectoInteres := firstValue(
+		body.ProyectoInteres,
+		body.Project,
+	)
+
+	categoriaInteres := firstValue(
+		body.CategoriaInteres,
+		body.Interest,
+	)
+
+	proyectoID := firstValue(
+		body.ProyectoID,
+		body.ProjectID,
+	)
+
+	campaniaSlug := firstValue(
+		body.CampaniaSlug,
+		body.Campaign,
+		"formulario-web-general",
+	)
+
+	campaniaNombre := firstValue(
+		body.CampaniaNombre,
+		campaniaSlug,
+	)
+
+	origenRuta := firstValue(
+		body.OrigenRuta,
+		c.GetHeader("Referer"),
+	)
+
+	origenComponente := firstValue(
+		body.OrigenComponente,
+		"Formulario web",
+	)
 
 	if nombresCompletos == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -149,15 +216,46 @@ func (h *LeadHandler) CreateLead(c *gin.Context) {
 				true
 			)
 			on conflict (slug) do update
-			set updated_at = now()
-			returning id, nombre, slug
+			set
+				nombre = excluded.nombre,
+				activo = true,
+				updated_at = now()
+			returning
+				id,
+				nombre,
+				slug
 		),
+
+		proyecto_actual as (
+			select
+				p.id,
+				p.nombre
+			from proyectos p
+			where
+				(
+					nullif($3, '') is not null
+					and p.id::text = nullif($3, '')
+				)
+				or
+				(
+					nullif($5, '') is not null
+					and lower(trim(p.nombre)) = lower(trim($5))
+				)
+			order by
+				case
+					when p.id::text = nullif($3, '') then 0
+					else 1
+				end
+			limit 1
+		),
+
 		lead_creado as (
 			insert into leads (
 				estado_lead_id,
 				proyecto_id,
 				campania_id,
 				nombres_completos,
+				proyecto_interes,
 				telefono,
 				email,
 				mensaje,
@@ -166,20 +264,47 @@ func (h *LeadHandler) CreateLead(c *gin.Context) {
 				origen_componente
 			)
 			values (
-				(select id from estado_leads where nombre = 'Nuevo' limit 1),
-				nullif($3, '')::uuid,
-				(select id from campania_actual limit 1),
+				(
+					select id
+					from estado_leads
+					where nombre = 'Nuevo'
+					limit 1
+				),
+
+				(
+					select id
+					from proyecto_actual
+					limit 1
+				),
+
+				(
+					select id
+					from campania_actual
+					limit 1
+				),
+
 				$4,
-				$5,
-				nullif($6, ''),
+
+				coalesce(
+					nullif($5, ''),
+					(
+						select nombre
+						from proyecto_actual
+						limit 1
+					)
+				),
+
+				$6,
 				nullif($7, ''),
 				nullif($8, ''),
 				nullif($9, ''),
-				nullif($10, '')
+				nullif($10, ''),
+				nullif($11, '')
 			)
 			returning
 				id,
 				nombres_completos,
+				proyecto_interes,
 				telefono,
 				email,
 				mensaje,
@@ -195,9 +320,11 @@ func (h *LeadHandler) CreateLead(c *gin.Context) {
 				asesor_id,
 				campania_id
 		)
+
 		select
 			l.id::text,
 			l.nombres_completos,
+			coalesce(l.proyecto_interes, ''),
 			l.telefono,
 			coalesce(l.email, ''),
 			coalesce(l.mensaje, ''),
@@ -209,7 +336,12 @@ func (h *LeadHandler) CreateLead(c *gin.Context) {
 			l.activo,
 			l.created_at,
 
-			coalesce(p.nombre, ''),
+			coalesce(
+				p.nombre,
+				l.proyecto_interes,
+				''
+			),
+
 			coalesce(p.tipo, ''),
 			coalesce(p.ubicacion, ''),
 			e.nombre,
@@ -218,28 +350,60 @@ func (h *LeadHandler) CreateLead(c *gin.Context) {
 			coalesce(ca.slug, '')
 
 		from lead_creado l
-		left join proyectos p on p.id = l.proyecto_id
-		inner join estado_leads e on e.id = l.estado_lead_id
-		left join asesores a on a.id = l.asesor_id
-		left join campanias ca on ca.id = l.campania_id;
+
+		left join proyectos p
+			on p.id = l.proyecto_id
+
+		inner join estado_leads e
+			on e.id = l.estado_lead_id
+
+		left join asesores a
+			on a.id = l.asesor_id
+
+		left join campanias ca
+			on ca.id = l.campania_id;
 	`
 
 	err := h.DB.QueryRow(
 		c.Request.Context(),
 		query,
+
+		// $1
 		campaniaSlug,
+
+		// $2
 		campaniaNombre,
-		firstValue(body.ProyectoID),
+
+		// $3
+		proyectoID,
+
+		// $4
 		nombresCompletos,
+
+		// $5
+		proyectoInteres,
+
+		// $6
 		telefono,
+
+		// $7
 		email,
+
+		// $8
 		mensaje,
+
+		// $9
 		categoriaInteres,
+
+		// $10
 		origenRuta,
+
+		// $11
 		origenComponente,
 	).Scan(
 		&lead.ID,
 		&lead.NombresCompletos,
+		&lead.ProyectoInteres,
 		&lead.Telefono,
 		&lead.Email,
 		&lead.Mensaje,
@@ -274,7 +438,7 @@ func (h *LeadHandler) CreateLead(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"success":  true,
 		"response": "lead.created",
-		"message":  "Lead registrado correctamente.",
+		"message":  "Datos enviados correctamente. Un asesor se comunicará contigo.",
 		"data": gin.H{
 			"lead": lead,
 		},
@@ -286,6 +450,7 @@ func (h *LeadHandler) GetAllLeads(c *gin.Context) {
 		select
 			l.id::text,
 			l.nombres_completos,
+			coalesce(l.proyecto_interes, ''),
 			l.telefono,
 			coalesce(l.email, ''),
 			coalesce(l.mensaje, ''),
@@ -297,7 +462,12 @@ func (h *LeadHandler) GetAllLeads(c *gin.Context) {
 			l.activo,
 			l.created_at,
 
-			coalesce(p.nombre, ''),
+			coalesce(
+				p.nombre,
+				l.proyecto_interes,
+				''
+			),
+
 			coalesce(p.tipo, ''),
 			coalesce(p.ubicacion, ''),
 			e.nombre,
@@ -306,15 +476,29 @@ func (h *LeadHandler) GetAllLeads(c *gin.Context) {
 			coalesce(ca.slug, '')
 
 		from leads l
-		left join proyectos p on p.id = l.proyecto_id
-		inner join estado_leads e on e.id = l.estado_lead_id
-		left join asesores a on a.id = l.asesor_id
-		left join campanias ca on ca.id = l.campania_id
+
+		left join proyectos p
+			on p.id = l.proyecto_id
+
+		inner join estado_leads e
+			on e.id = l.estado_lead_id
+
+		left join asesores a
+			on a.id = l.asesor_id
+
+		left join campanias ca
+			on ca.id = l.campania_id
+
 		where l.deleted_at is null
+
 		order by l.created_at desc;
 	`
 
-	rows, err := h.DB.Query(c.Request.Context(), query)
+	rows, err := h.DB.Query(
+		c.Request.Context(),
+		query,
+	)
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success":  false,
@@ -326,6 +510,7 @@ func (h *LeadHandler) GetAllLeads(c *gin.Context) {
 		})
 		return
 	}
+
 	defer rows.Close()
 
 	leads := []LeadResponse{}
@@ -336,6 +521,7 @@ func (h *LeadHandler) GetAllLeads(c *gin.Context) {
 		err := rows.Scan(
 			&lead.ID,
 			&lead.NombresCompletos,
+			&lead.ProyectoInteres,
 			&lead.Telefono,
 			&lead.Email,
 			&lead.Mensaje,
@@ -359,7 +545,7 @@ func (h *LeadHandler) GetAllLeads(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"success":  false,
 				"response": "lead.scan_error",
-				"message":  "Error al leer leads.",
+				"message":  "Error al leer los leads.",
 				"data": gin.H{
 					"error": err.Error(),
 				},
@@ -368,6 +554,18 @@ func (h *LeadHandler) GetAllLeads(c *gin.Context) {
 		}
 
 		leads = append(leads, lead)
+	}
+
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success":  false,
+			"response": "lead.rows_error",
+			"message":  "Error al recorrer los leads.",
+			"data": gin.H{
+				"error": err.Error(),
+			},
+		})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
