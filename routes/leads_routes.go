@@ -6,11 +6,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func RegisterLeadRoutes(api *gin.RouterGroup, leadHandler *handlers.LeadHandler) {
+func RegisterLeadRoutes(
+	api *gin.RouterGroup,
+	leadHandler *handlers.LeadHandler,
+) {
 	leads := api.Group("/leads")
 	{
 		leads.GET("", leadHandler.GetAllLeads)
 		leads.POST("", leadHandler.CreateLead)
-		leads.POST("/api/terreno-leads", leadHandler.CreateTerrainLead)
 	}
+
+	api.POST(
+		"/terrain-leads",
+		leadHandler.CreateTerrainLead,
+	)
 }
