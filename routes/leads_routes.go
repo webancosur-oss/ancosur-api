@@ -12,14 +12,40 @@ func RegisterLeadRoutes(
 ) {
 	leads := api.Group("/leads")
 	{
+		// Crear un lead
+		leads.POST(
+			"",
+			leadHandler.CreateLead,
+		)
+
+		// Listar todos los leads
 		leads.GET(
 			"",
 			leadHandler.GetAllLeads,
 		)
 
-		leads.POST(
-			"",
-			leadHandler.CreateLead,
+		// Obtener un lead por ID
+		leads.GET(
+			"/:id",
+			leadHandler.GetLeadByID,
+		)
+
+		// Actualizar un lead
+		leads.PUT(
+			"/:id",
+			leadHandler.UpdateLead,
+		)
+
+		// Actualización parcial
+		leads.PATCH(
+			"/:id",
+			leadHandler.UpdateLead,
+		)
+
+		// Eliminación lógica
+		leads.DELETE(
+			"/:id",
+			leadHandler.DeleteLead,
 		)
 	}
 }

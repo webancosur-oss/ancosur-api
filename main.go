@@ -41,9 +41,16 @@ func main() {
 	router := gin.Default()
 
 	/*
-		Ruta utilizada por Railway
-		para verificar que la API está funcionando.
+		Evita la advertencia de Gin sobre
+		proxies de confianza.
 	*/
+	if err := router.SetTrustedProxies(nil); err != nil {
+		log.Fatal(
+			"No se pudieron configurar los proxies: ",
+			err,
+		)
+	}
+
 	router.GET(
 		"/health",
 		func(c *gin.Context) {
@@ -57,9 +64,6 @@ func main() {
 		},
 	)
 
-	/*
-		Ruta principal opcional.
-	*/
 	router.GET(
 		"/",
 		func(c *gin.Context) {
@@ -73,15 +77,13 @@ func main() {
 		},
 	)
 
-	leadHandler :=
-		handlers.NewLeadHandler(
-			dbPool,
-		)
+	leadHandler := handlers.NewLeadHandler(
+		dbPool,
+	)
 
-	benefitsHandler :=
-		handlers.NewBenefitsHandler(
-			dbPool,
-		)
+	benefitsHandler := handlers.NewBenefitsHandler(
+		dbPool,
+	)
 
 	api := router.Group("/api")
 
@@ -95,21 +97,26 @@ func main() {
 		benefitsHandler,
 	)
 
-	port := cfg.Port
+	/*
+		Railway entrega PORT automáticamente.
+		En local se utiliza el puerto configurado
+		o 5000 como respaldo.
+	*/
+	port := os.Getenv("PORT")
 
 	if port == "" {
-		port = os.Getenv("PORT")
+		port = cfg.Port
 	}
 
 	if port == "" {
-		port = "8080"
+		port = "5000"
 	}
 
 	address := "0.0.0.0:" + port
 
 	log.Printf(
-		"API ANCOSUR ejecutándose en %s",
-		address,
+		"API ANCOSUR ejecutándose en http://localhost:%s",
+		port,
 	)
 
 	if err := router.Run(address); err != nil {
