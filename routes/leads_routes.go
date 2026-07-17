@@ -12,12 +12,14 @@ func RegisterLeadRoutes(
 ) {
 	leads := api.Group("/leads")
 	{
-		leads.GET("", leadHandler.GetAllLeads)
-		leads.POST("", leadHandler.CreateLead)
-	}
+		leads.GET(
+			"",
+			leadHandler.GetAllLeads,
+		)
 
-	api.POST(
-		"/terrain-leads",
-		leadHandler.CreateTerrainLead,
-	)
+		leads.POST(
+			"",
+			leadHandler.CreateLead,
+		)
+	}
 }

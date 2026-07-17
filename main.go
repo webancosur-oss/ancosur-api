@@ -6,10 +6,7 @@ import (
 	"ancosur-api/routes"
 	"context"
 	"log"
-	"net/http"
-	"time"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -17,111 +14,58 @@ import (
 func main() {
 	cfg := config.Load()
 
-	if cfg.DatabaseURL == "" {
-		log.Fatal(
-			"DATABASE_URL no está configurada. " +
-				"Configúrala en Railway usando " +
-				"${{Postgres.DATABASE_URL}}",
-		)
-	}
+	ctx := context.Background()
 
-	dbContext, cancel := context.WithTimeout(
-		context.Background(),
-		15*time.Second,
-	)
-	defer cancel()
-
-	db, err := pgxpool.New(
-		dbContext,
+	dbPool, err := pgxpool.New(
+		ctx,
 		cfg.DatabaseURL,
 	)
-	if err != nil {
-		log.Fatal(
-			"Error configurando la conexión a PostgreSQL: ",
-			err,
-		)
-	}
-	defer db.Close()
 
-	if err := db.Ping(dbContext); err != nil {
+	if err != nil {
 		log.Fatal(
 			"No se pudo conectar a PostgreSQL: ",
 			err,
 		)
 	}
 
-	router := gin.Default()
+	defer dbPool.Close()
 
-	router.Use(cors.New(cors.Config{
-		AllowOrigins: cfg.FrontendURLs,
-
-		AllowMethods: []string{
-			http.MethodGet,
-			http.MethodPost,
-			http.MethodPut,
-			http.MethodPatch,
-			http.MethodDelete,
-			http.MethodOptions,
-		},
-
-		AllowHeaders: []string{
-			"Origin",
-			"Content-Type",
-			"Authorization",
-			"Accept",
-		},
-
-		ExposeHeaders: []string{
-			"Content-Length",
-		},
-
-		AllowCredentials: true,
-
-		MaxAge: 12 * time.Hour,
-	}))
-
-	router.GET("/", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "API de ANCOSUR funcionando correctamente",
-			"app_url": cfg.AppURL,
-		})
-	})
-
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "ok",
-			"service": "ancosur-api",
-		})
-	})
-
-	leadHandler := handlers.NewLeadHandler(db)
-
-	api := router.Group("/api")
-	{
-		routes.RegisterLeadRoutes(
-			api,
-			leadHandler,
+	if err := dbPool.Ping(ctx); err != nil {
+		log.Fatal(
+			"No se pudo verificar la conexión con PostgreSQL: ",
+			err,
 		)
 	}
 
-	log.Printf(
-		"API de ANCOSUR iniciada en el puerto %s",
-		cfg.Port,
+	router := gin.Default()
+
+	leadHandler :=
+		handlers.NewLeadHandler(
+			dbPool,
+		)
+
+	benefitsHandler :=
+		handlers.NewBenefitsHandler(
+			dbPool,
+		)
+
+	api := router.Group("/api")
+
+	routes.RegisterLeadRoutes(
+		api,
+		leadHandler,
 	)
 
-	log.Printf(
-		"URL pública de la API: %s",
-		cfg.AppURL,
+	routes.RegisterBenefitsRoutes(
+		api,
+		benefitsHandler,
 	)
 
-	log.Printf(
-		"Orígenes permitidos: %v",
-		cfg.FrontendURLs,
-	)
-
-	if err := router.Run(":" + cfg.Port); err != nil {
+	if err := router.Run(
+		":" + cfg.Port,
+	); err != nil {
 		log.Fatal(
-			"Error iniciando el servidor: ",
+			"No se pudo iniciar el servidor: ",
 			err,
 		)
 	}
