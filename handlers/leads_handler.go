@@ -167,12 +167,12 @@ const leadSelectQuery = `
 		COALESCE(l.proyecto_id::text, ''),
 		COALESCE(l.campania_id::text, ''),
 
-		l.nombres_completos,
+		COALESCE(l.nombres_completos, ''),
 		COALESCE(l.tipo_documento, ''),
 		COALESCE(l.numero_documento, ''),
 
 		COALESCE(l.proyecto_interes, ''),
-		l.telefono,
+		COALESCE(l.telefono, ''),
 		COALESCE(l.email, ''),
 		COALESCE(l.mensaje, ''),
 
@@ -182,11 +182,19 @@ const leadSelectQuery = `
 		COALESCE(l.origen_ruta, ''),
 		COALESCE(l.origen_componente, ''),
 
-		l.atendido,
-		l.activo,
+		COALESCE(l.atendido, FALSE),
+		COALESCE(l.activo, TRUE),
 
-		l.created_at,
-		l.updated_at,
+		COALESCE(
+			l.created_at,
+			NOW()
+		),
+
+		COALESCE(
+			l.updated_at,
+			l.created_at,
+			NOW()
+		),
 
 		COALESCE(
 			p.nombre,
@@ -197,9 +205,12 @@ const leadSelectQuery = `
 		COALESCE(p.tipo, ''),
 		COALESCE(p.ubicacion, ''),
 
-		e.nombre,
+		COALESCE(e.nombre, ''),
 
-		COALESCE(a.nombres_completos, ''),
+		COALESCE(
+			a.nombres_completos,
+			''
+		),
 
 		COALESCE(c.nombre, ''),
 		COALESCE(c.slug, '')
@@ -209,7 +220,7 @@ const leadSelectQuery = `
 	LEFT JOIN proyectos p
 		ON p.id = l.proyecto_id
 
-	INNER JOIN estado_leads e
+	LEFT JOIN estado_leads e
 		ON e.id = l.estado_lead_id
 
 	LEFT JOIN asesores a
