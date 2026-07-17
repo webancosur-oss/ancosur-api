@@ -6,6 +6,8 @@ import (
 	"ancosur-api/routes"
 	"context"
 	"log"
+	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,7 +22,6 @@ func main() {
 		ctx,
 		cfg.DatabaseURL,
 	)
-
 	if err != nil {
 		log.Fatal(
 			"No se pudo conectar a PostgreSQL: ",
@@ -38,6 +39,39 @@ func main() {
 	}
 
 	router := gin.Default()
+
+	/*
+		Ruta utilizada por Railway
+		para verificar que la API está funcionando.
+	*/
+	router.GET(
+		"/health",
+		func(c *gin.Context) {
+			c.JSON(
+				http.StatusOK,
+				gin.H{
+					"status":  "ok",
+					"service": "ancosur-api",
+				},
+			)
+		},
+	)
+
+	/*
+		Ruta principal opcional.
+	*/
+	router.GET(
+		"/",
+		func(c *gin.Context) {
+			c.JSON(
+				http.StatusOK,
+				gin.H{
+					"success": true,
+					"message": "API ANCOSUR funcionando.",
+				},
+			)
+		},
+	)
 
 	leadHandler :=
 		handlers.NewLeadHandler(
@@ -61,9 +95,24 @@ func main() {
 		benefitsHandler,
 	)
 
-	if err := router.Run(
-		":" + cfg.Port,
-	); err != nil {
+	port := cfg.Port
+
+	if port == "" {
+		port = os.Getenv("PORT")
+	}
+
+	if port == "" {
+		port = "8080"
+	}
+
+	address := "0.0.0.0:" + port
+
+	log.Printf(
+		"API ANCOSUR ejecutándose en %s",
+		address,
+	)
+
+	if err := router.Run(address); err != nil {
 		log.Fatal(
 			"No se pudo iniciar el servidor: ",
 			err,
