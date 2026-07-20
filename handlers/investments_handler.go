@@ -306,6 +306,122 @@ func investmentParseOffset(value string) int {
 	return parsedValue
 }
 
+func investmentGetDefaultLeadStateID(
+	ctx context.Context,
+	tx pgx.Tx,
+) (string, error) {
+	var stateID string
+
+	err := tx.QueryRow(
+		ctx,
+		`
+			SELECT id::text
+			FROM estado_leads
+			ORDER BY
+				CASE
+					WHEN LOWER(TRIM(nombre)) =
+						LOWER('Contacto inicial del cliente')
+					THEN 0
+
+					WHEN LOWER(TRIM(nombre)) =
+						LOWER('Nuevo')
+					THEN 1
+
+					ELSE 2
+				END,
+				nombre ASC
+			LIMIT 1
+		`,
+	).Scan(&stateID)
+
+	return stateID, err
+}
+
+func investmentGetOrCreateCampaignID(
+	ctx context.Context,
+	tx pgx.Tx,
+	name string,
+	slug string,
+) (string, error) {
+	var campaignID string
+
+	err := tx.QueryRow(
+		ctx,
+		`
+			SELECT id::text
+			FROM campanias
+			WHERE slug = $1
+			LIMIT 1
+		`,
+		slug,
+	).Scan(&campaignID)
+
+	if err == nil {
+		_, updateErr := tx.Exec(
+			ctx,
+			`
+				UPDATE campanias
+				SET
+					nombre = $2,
+					activo = TRUE,
+					updated_at = NOW()
+				WHERE id = $1::uuid
+			`,
+			campaignID,
+			name,
+		)
+
+		if updateErr != nil {
+			return "", updateErr
+		}
+
+		return campaignID, nil
+	}
+
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+
+	err = tx.QueryRow(
+		ctx,
+		`
+			INSERT INTO campanias (
+				nombre,
+				slug,
+				activo,
+				created_at,
+				updated_at
+			)
+			VALUES (
+				$1,
+				$2,
+				TRUE,
+				NOW(),
+				NOW()
+			)
+			RETURNING id::text
+		`,
+		name,
+		slug,
+	).Scan(&campaignID)
+
+	if err != nil &&
+		investmentHasSQLState(err, "23505") {
+		err = tx.QueryRow(
+			ctx,
+			`
+				SELECT id::text
+				FROM campanias
+				WHERE slug = $1
+				LIMIT 1
+			`,
+			slug,
+		).Scan(&campaignID)
+	}
+
+	return campaignID, err
+}
+
 func (h *InvestmentHandler) getInvestmentByID(
 	ctx context.Context,
 	investmentID string,
@@ -1156,100 +1272,104 @@ func (h *InvestmentHandler) CreateInvestmentLead(c *gin.Context) {
 		_ = tx.Rollback(ctx)
 	}()
 
+	stateID, err := investmentGetDefaultLeadStateID(
+		ctx,
+		tx,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			investmentError(
+				c,
+				http.StatusInternalServerError,
+				"investment_lead.state_not_found",
+				"No existe ningún estado registrado en estado_leads.",
+				nil,
+			)
+			return
+		}
+
+		investmentError(
+			c,
+			http.StatusInternalServerError,
+			"investment_lead.state_error",
+			"No se pudo obtener el estado inicial del lead.",
+			err,
+		)
+		return
+	}
+
+	campaignID, err := investmentGetOrCreateCampaignID(
+		ctx,
+		tx,
+		campaignName,
+		campaignSlug,
+	)
+	if err != nil {
+		investmentError(
+			c,
+			http.StatusInternalServerError,
+			"investment_lead.campaign_error",
+			"No se pudo obtener o crear la campaña.",
+			err,
+		)
+		return
+	}
+
 	var leadID string
 
 	err = tx.QueryRow(
 		ctx,
 		`
-			WITH campania_actual AS (
-				INSERT INTO campanias (
-					nombre,
-					slug,
-					activo
-				)
-				VALUES (
-					$1,
-					$2,
-					TRUE
-				)
-				ON CONFLICT (slug)
-				DO UPDATE SET
-					nombre = EXCLUDED.nombre,
-					activo = TRUE,
-					updated_at = NOW()
-				RETURNING id
-			),
-
-			estado_actual AS (
-				SELECT id
-				FROM estado_leads
-				WHERE activo = TRUE
-				  AND deleted_at IS NULL
-				ORDER BY
-					CASE
-						WHEN LOWER(nombre) = LOWER('Contacto inicial del cliente') THEN 0
-						WHEN LOWER(nombre) = LOWER('Nuevo') THEN 1
-						ELSE 2
-					END,
-					nombre ASC
-				LIMIT 1
-			)
-
 			INSERT INTO leads (
 				estado_lead_id,
 				campania_id,
+				fuente_prospeccion,
+				lead,
 				nombres_completos,
 				proyecto_interes,
 				telefono,
 				email,
 				mensaje,
-				categoria_interes,
-				fuente_prospeccion,
 				origen_ruta,
 				origen_componente,
 				atendido,
 				activo,
 				created_at,
-				updated_at
+				updated_at,
+				categoria_interes
 			)
 			VALUES (
-				(
-					SELECT id
-					FROM estado_actual
-					LIMIT 1
-				),
-				(
-					SELECT id
-					FROM campania_actual
-					LIMIT 1
-				),
+				$1::uuid,
+				$2::uuid,
 				$3,
 				$4,
 				$5,
-				NULLIF($6, ''),
+				$6,
 				$7,
-				$8,
+				NULLIF($8, ''),
 				$9,
 				NULLIF($10, ''),
 				NULLIF($11, ''),
 				FALSE,
 				TRUE,
 				NOW(),
-				NOW()
+				NOW(),
+				$12
 			)
 			RETURNING id::text
 		`,
-		campaignName,
-		campaignSlug,
+		stateID,
+		campaignID,
+		source,
+		fullName,
 		fullName,
 		project,
 		phone,
 		email,
 		leadMessage,
-		category,
-		source,
 		originRoute,
 		originComponent,
+		category,
 	).Scan(&leadID)
 
 	if err != nil {
