@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -22,58 +23,55 @@ type Config struct {
 	DBSSLMode  string
 
 	DatabaseURL string
+
+	JWTSecret       string
+	JWTIssuer       string
+	JWTExpiresHours int
 }
 
+// Load carga las variables locales o las configuradas en Railway.
 func Load() Config {
-	// Útil en desarrollo local.
-	// En Railway las variables se leen directamente del entorno.
 	_ = godotenv.Load()
 
-	port := getEnv("PORT", "5000")
-
-	appURL := strings.TrimRight(
-		strings.TrimSpace(os.Getenv("APP_URL")),
-		"/",
+	port := getEnv(
+		"PORT",
+		"5000",
 	)
 
-	// Si APP_URL no está configurado, utiliza el dominio
-	// público generado automáticamente por Railway.
-	if appURL == "" {
-		railwayPublicDomain := strings.TrimSpace(
-			os.Getenv("RAILWAY_PUBLIC_DOMAIN"),
-		)
-
-		if railwayPublicDomain != "" {
-			appURL = "https://" + strings.TrimRight(
-				railwayPublicDomain,
-				"/",
-			)
-		} else {
-			appURL = "http://localhost:" + port
-		}
-	}
-
+	appURL := getAppURL(port)
 	frontendURLs := parseFrontendURLs()
 
-	dbHost := strings.TrimSpace(os.Getenv("DB_HOST"))
-	dbPort := getEnv("DB_PORT", "5432")
-	dbName := strings.TrimSpace(os.Getenv("DB_NAME"))
-	dbUser := strings.TrimSpace(os.Getenv("DB_USER"))
-	dbPassword := os.Getenv("DB_PASSWORD")
-	dbSSLMode := getEnv("DB_SSLMODE", "require")
+	dbHost := strings.TrimSpace(
+		os.Getenv("DB_HOST"),
+	)
 
-	/*
-		En Railway debe utilizarse directamente:
+	dbPort := getEnv(
+		"DB_PORT",
+		"5432",
+	)
 
-		DATABASE_URL=${{Postgres.DATABASE_URL}}
+	dbName := strings.TrimSpace(
+		os.Getenv("DB_NAME"),
+	)
 
-		Si DATABASE_URL no existe, se intenta construir
-		desde las variables DB_* para mantener compatibilidad local.
-	*/
+	dbUser := strings.TrimSpace(
+		os.Getenv("DB_USER"),
+	)
+
+	dbPassword := os.Getenv(
+		"DB_PASSWORD",
+	)
+
+	dbSSLMode := getEnv(
+		"DB_SSLMODE",
+		"require",
+	)
+
 	databaseURL := strings.TrimSpace(
 		os.Getenv("DATABASE_URL"),
 	)
 
+	// Permite conexión local usando variables DB_*.
 	if databaseURL == "" {
 		databaseURL = buildDatabaseURL(
 			dbHost,
@@ -98,11 +96,31 @@ func Load() Config {
 		DBSSLMode:  dbSSLMode,
 
 		DatabaseURL: databaseURL,
+
+		JWTSecret: strings.TrimSpace(
+			os.Getenv("JWT_SECRET"),
+		),
+
+		JWTIssuer: getEnv(
+			"JWT_ISSUER",
+			"ancosur-api",
+		),
+
+		JWTExpiresHours: getPositiveIntEnv(
+			"JWT_EXPIRES_HOURS",
+			8,
+		),
 	}
 }
 
-func getEnv(key string, fallback string) string {
-	value := strings.TrimSpace(os.Getenv(key))
+// getEnv devuelve la variable o un valor predeterminado.
+func getEnv(
+	key string,
+	fallback string,
+) string {
+	value := strings.TrimSpace(
+		os.Getenv(key),
+	)
 
 	if value == "" {
 		return fallback
@@ -111,21 +129,67 @@ func getEnv(key string, fallback string) string {
 	return value
 }
 
-func parseFrontendURLs() []string {
-	/*
-		FRONTEND_URLS permite varios dominios separados
-		por comas:
+// getPositiveIntEnv obtiene un entero positivo del entorno.
+func getPositiveIntEnv(
+	key string,
+	fallback int,
+) int {
+	value := strings.TrimSpace(
+		os.Getenv(key),
+	)
 
-		http://localhost:3000,
-		https://ancosur-web-production.up.railway.app,
-		https://ancosur.com,
-		https://www.ancosur.com
-	*/
+	if value == "" {
+		return fallback
+	}
+
+	parsedValue, err := strconv.Atoi(
+		value,
+	)
+
+	if err != nil || parsedValue < 1 {
+		return fallback
+	}
+
+	return parsedValue
+}
+
+// getAppURL obtiene la URL pública de la API.
+func getAppURL(port string) string {
+	appURL := strings.TrimRight(
+		strings.TrimSpace(
+			os.Getenv("APP_URL"),
+		),
+		"/",
+	)
+
+	if appURL != "" {
+		return appURL
+	}
+
+	railwayDomain := strings.TrimSpace(
+		os.Getenv(
+			"RAILWAY_PUBLIC_DOMAIN",
+		),
+	)
+
+	if railwayDomain != "" {
+		return "https://" +
+			strings.TrimRight(
+				railwayDomain,
+				"/",
+			)
+	}
+
+	return "http://localhost:" + port
+}
+
+// parseFrontendURLs carga los dominios permitidos para CORS.
+func parseFrontendURLs() []string {
 	rawOrigins := strings.TrimSpace(
 		os.Getenv("FRONTEND_URLS"),
 	)
 
-	// Compatibilidad con la antigua variable FRONTEND_URL.
+	// Mantiene compatibilidad con FRONTEND_URL.
 	if rawOrigins == "" {
 		rawOrigins = strings.TrimSpace(
 			os.Getenv("FRONTEND_URL"),
@@ -138,8 +202,16 @@ func parseFrontendURLs() []string {
 		}
 	}
 
-	parts := strings.Split(rawOrigins, ",")
-	origins := make([]string, 0, len(parts))
+	parts := strings.Split(
+		rawOrigins,
+		",",
+	)
+
+	origins := make(
+		[]string,
+		0,
+		len(parts),
+	)
 
 	for _, part := range parts {
 		origin := strings.TrimRight(
@@ -148,13 +220,17 @@ func parseFrontendURLs() []string {
 		)
 
 		if origin != "" {
-			origins = append(origins, origin)
+			origins = append(
+				origins,
+				origin,
+			)
 		}
 	}
 
 	return origins
 }
 
+// buildDatabaseURL crea la conexión usando las variables DB_*.
 func buildDatabaseURL(
 	host string,
 	port string,
@@ -163,7 +239,6 @@ func buildDatabaseURL(
 	password string,
 	sslMode string,
 ) string {
-	// Evita construir una URL inválida con datos vacíos.
 	if host == "" ||
 		name == "" ||
 		user == "" ||
@@ -173,20 +248,29 @@ func buildDatabaseURL(
 
 	connectionURL := &url.URL{
 		Scheme: "postgresql",
+
 		User: url.UserPassword(
 			user,
 			password,
 		),
+
 		Host: net.JoinHostPort(
 			host,
 			port,
 		),
+
 		Path: "/" + name,
 	}
 
 	query := connectionURL.Query()
-	query.Set("sslmode", sslMode)
-	connectionURL.RawQuery = query.Encode()
+
+	query.Set(
+		"sslmode",
+		sslMode,
+	)
+
+	connectionURL.RawQuery =
+		query.Encode()
 
 	return connectionURL.String()
 }

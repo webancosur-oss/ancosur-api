@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -65,10 +66,15 @@ type CreateLeadRequest struct {
 	CampaniaSlug   string `json:"campania_slug"`
 	CampaniaNombre string `json:"campania_nombre"`
 
-	Source             string `json:"source"`
-	FuenteProspeccion  string `json:"fuente_prospeccion"`
-	OrigenRuta         string `json:"origen_ruta"`
-	OrigenComponente   string `json:"origen_componente"`
+	Source            string `json:"source"`
+	FuenteProspeccion string `json:"fuente_prospeccion"`
+	OrigenRuta        string `json:"origen_ruta"`
+	OrigenComponente  string `json:"origen_componente"`
+
+	EtapaEmbudo string   `json:"etapa_embudo"`
+	Lead        string   `json:"lead"`
+	FechaVenta  string   `json:"fecha_venta"`
+	MontoVenta  *float64 `json:"monto_venta"`
 }
 
 type UpdateLeadRequest struct {
@@ -104,6 +110,11 @@ type UpdateLeadRequest struct {
 	OrigenRuta        *string `json:"origen_ruta"`
 	OrigenComponente  *string `json:"origen_componente"`
 
+	EtapaEmbudo *string  `json:"etapa_embudo"`
+	Lead        *string  `json:"lead"`
+	FechaVenta  *string  `json:"fecha_venta"`
+	MontoVenta  *float64 `json:"monto_venta"`
+
 	Atendido *bool `json:"atendido"`
 	Activo   *bool `json:"activo"`
 }
@@ -121,6 +132,9 @@ type LeadResponse struct {
 	EstadoLeadID string `json:"estado_lead_id"`
 	ProyectoID   string `json:"proyecto_id"`
 	CampaniaID   string `json:"campania_id"`
+
+	EtapaEmbudo string `json:"etapa_embudo"`
+	Lead        string `json:"lead"`
 
 	NombresCompletos string `json:"nombres_completos"`
 	TipoDocumento    string `json:"tipo_documento"`
@@ -140,8 +154,12 @@ type LeadResponse struct {
 	Atendido bool `json:"atendido"`
 	Activo   bool `json:"activo"`
 
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at"`
+
+	FechaVenta *time.Time `json:"fecha_venta"`
+	MontoVenta *float64   `json:"monto_venta"`
 
 	Proyecto       string `json:"proyecto"`
 	TipoProyecto   string `json:"tipo_proyecto"`
@@ -163,9 +181,12 @@ const leadSelectQuery = `
 		l.id::text,
 
 		COALESCE(l.asesor_id::text, ''),
-		l.estado_lead_id::text,
+		COALESCE(l.estado_lead_id::text, ''),
 		COALESCE(l.proyecto_id::text, ''),
 		COALESCE(l.campania_id::text, ''),
+
+		COALESCE(l.etapa_embudo, ''),
+		COALESCE(l.lead, ''),
 
 		COALESCE(l.nombres_completos, ''),
 		COALESCE(l.tipo_documento, ''),
@@ -185,16 +206,12 @@ const leadSelectQuery = `
 		COALESCE(l.atendido, FALSE),
 		COALESCE(l.activo, TRUE),
 
-		COALESCE(
-			l.created_at,
-			NOW()
-		),
+		COALESCE(l.created_at, NOW()),
+		COALESCE(l.updated_at, l.created_at, NOW()),
+		l.deleted_at,
 
-		COALESCE(
-			l.updated_at,
-			l.created_at,
-			NOW()
-		),
+		l.fecha_venta,
+		l.monto_venta,
 
 		COALESCE(
 			p.nombre,
@@ -245,6 +262,9 @@ func scanLead(
 		&lead.ProyectoID,
 		&lead.CampaniaID,
 
+		&lead.EtapaEmbudo,
+		&lead.Lead,
+
 		&lead.NombresCompletos,
 		&lead.TipoDocumento,
 		&lead.NumeroDocumento,
@@ -265,6 +285,10 @@ func scanLead(
 
 		&lead.CreatedAt,
 		&lead.UpdatedAt,
+		&lead.DeletedAt,
+
+		&lead.FechaVenta,
+		&lead.MontoVenta,
 
 		&lead.Proyecto,
 		&lead.TipoProyecto,
@@ -371,6 +395,18 @@ func (h *LeadHandler) CreateLead(
 		"Formulario web",
 	)
 
+	etapaEmbudo := strings.TrimSpace(
+		body.EtapaEmbudo,
+	)
+
+	leadTipo := strings.TrimSpace(
+		body.Lead,
+	)
+
+	fechaVenta := strings.TrimSpace(
+		body.FechaVenta,
+	)
+
 	if nombresCompletos == "" {
 		leadError(
 			c,
@@ -419,6 +455,30 @@ func (h *LeadHandler) CreateLead(
 			http.StatusBadRequest,
 			"lead.validation_error",
 			"El DNI debe tener 8 dígitos.",
+			nil,
+		)
+		return
+	}
+
+	if fechaVenta != "" &&
+		!isValidDate(fechaVenta) {
+		leadError(
+			c,
+			http.StatusBadRequest,
+			"lead.validation_error",
+			"La fecha_venta debe tener el formato YYYY-MM-DD.",
+			nil,
+		)
+		return
+	}
+
+	if body.MontoVenta != nil &&
+		*body.MontoVenta < 0 {
+		leadError(
+			c,
+			http.StatusBadRequest,
+			"lead.validation_error",
+			"El monto_venta no puede ser negativo.",
 			nil,
 		)
 		return
@@ -481,6 +541,9 @@ func (h *LeadHandler) CreateLead(
 				proyecto_id,
 				campania_id,
 
+				etapa_embudo,
+				lead,
+
 				nombres_completos,
 				tipo_documento,
 				numero_documento,
@@ -495,6 +558,9 @@ func (h *LeadHandler) CreateLead(
 
 				origen_ruta,
 				origen_componente,
+
+				fecha_venta,
+				monto_venta,
 
 				atendido,
 				activo
@@ -535,6 +601,9 @@ func (h *LeadHandler) CreateLead(
 					LIMIT 1
 				),
 
+				NULLIF($15, ''),
+				NULLIF($16, ''),
+
 				$5,
 				NULLIF($6, ''),
 				NULLIF($7, ''),
@@ -558,25 +627,32 @@ func (h *LeadHandler) CreateLead(
 				NULLIF($13, ''),
 				NULLIF($14, ''),
 
+				NULLIF($17, '')::date,
+				$18,
+
 				FALSE,
 				TRUE
 			)
 			RETURNING id::text
 		`,
-		campaniaNombre,      // $1
-		campaniaSlug,        // $2
-		proyectoID,          // $3
-		proyectoInteres,     // $4
-		nombresCompletos,    // $5
-		tipoDocumento,       // $6
-		numeroDocumento,     // $7
-		telefono,            // $8
-		email,               // $9
-		mensaje,             // $10
-		categoriaInteres,    // $11
-		fuenteProspeccion,   // $12
-		origenRuta,          // $13
-		origenComponente,    // $14
+		campaniaNombre,    // $1
+		campaniaSlug,      // $2
+		proyectoID,        // $3
+		proyectoInteres,   // $4
+		nombresCompletos,  // $5
+		tipoDocumento,     // $6
+		numeroDocumento,   // $7
+		telefono,          // $8
+		email,             // $9
+		mensaje,           // $10
+		categoriaInteres,  // $11
+		fuenteProspeccion, // $12
+		origenRuta,        // $13
+		origenComponente,  // $14
+		etapaEmbudo,       // $15
+		leadTipo,          // $16
+		fechaVenta,        // $17
+		body.MontoVenta,   // $18
 	).Scan(&leadID)
 
 	if err != nil {
@@ -881,6 +957,21 @@ func (h *LeadHandler) UpdateLead(
 			body.CampaniaID,
 		)
 
+	stageProvided, etapaEmbudo :=
+		leadOptionalString(
+			body.EtapaEmbudo,
+		)
+
+	leadTypeProvided, leadTipo :=
+		leadOptionalString(
+			body.Lead,
+		)
+
+	saleDateProvided, fechaVenta :=
+		leadOptionalString(
+			body.FechaVenta,
+		)
+
 	if nameProvided &&
 		nombresCompletos == "" {
 		leadError(
@@ -972,26 +1063,314 @@ func (h *LeadHandler) UpdateLead(
 		return
 	}
 
-	hasChanges :=
-		nameProvided ||
-			phoneProvided ||
-			emailProvided ||
-			messageProvided ||
-			projectProvided ||
-			categoryProvided ||
-			projectIDProvided ||
-			typeDocumentProvided ||
-			documentProvided ||
-			sourceProvided ||
-			routeProvided ||
-			componentProvided ||
-			stateIDProvided ||
-			advisorIDProvided ||
-			campaignIDProvided ||
-			body.Atendido != nil ||
-			body.Activo != nil
+	if saleDateProvided &&
+		fechaVenta != "" &&
+		!isValidDate(fechaVenta) {
+		leadError(
+			c,
+			http.StatusBadRequest,
+			"lead.validation_error",
+			"La fecha_venta debe tener el formato YYYY-MM-DD.",
+			nil,
+		)
+		return
+	}
 
-	if !hasChanges {
+	if body.MontoVenta != nil &&
+		*body.MontoVenta < 0 {
+		leadError(
+			c,
+			http.StatusBadRequest,
+			"lead.validation_error",
+			"El monto_venta no puede ser negativo.",
+			nil,
+		)
+		return
+	}
+
+	setClauses := []string{}
+	args := []any{
+		leadID,
+	}
+
+	addArg := func(value any) string {
+		args = append(args, value)
+
+		return fmt.Sprintf(
+			"$%d",
+			len(args),
+		)
+	}
+
+	addStringSet := func(
+		column string,
+		provided bool,
+		value string,
+		nullable bool,
+	) {
+		if !provided {
+			return
+		}
+
+		param := addArg(value)
+
+		if nullable {
+			setClauses = append(
+				setClauses,
+				fmt.Sprintf(
+					"%s = NULLIF(%s, '')",
+					column,
+					param,
+				),
+			)
+
+			return
+		}
+
+		setClauses = append(
+			setClauses,
+			fmt.Sprintf(
+				"%s = %s",
+				column,
+				param,
+			),
+		)
+	}
+
+	addUUIDSet := func(
+		column string,
+		provided bool,
+		value string,
+		nullable bool,
+	) {
+		if !provided {
+			return
+		}
+
+		param := addArg(value)
+
+		if nullable {
+			setClauses = append(
+				setClauses,
+				fmt.Sprintf(
+					"%s = NULLIF(%s, '')::uuid",
+					column,
+					param,
+				),
+			)
+
+			return
+		}
+
+		setClauses = append(
+			setClauses,
+			fmt.Sprintf(
+				"%s = %s::uuid",
+				column,
+				param,
+			),
+		)
+	}
+
+	addStringSet(
+		"nombres_completos",
+		nameProvided,
+		nombresCompletos,
+		false,
+	)
+
+	addStringSet(
+		"telefono",
+		phoneProvided,
+		telefono,
+		false,
+	)
+
+	addStringSet(
+		"email",
+		emailProvided,
+		email,
+		true,
+	)
+
+	addStringSet(
+		"mensaje",
+		messageProvided,
+		mensaje,
+		true,
+	)
+
+	addStringSet(
+		"proyecto_interes",
+		projectProvided,
+		proyectoInteres,
+		true,
+	)
+
+	addStringSet(
+		"categoria_interes",
+		categoryProvided,
+		categoriaInteres,
+		true,
+	)
+
+	addStringSet(
+		"tipo_documento",
+		typeDocumentProvided,
+		tipoDocumento,
+		true,
+	)
+
+	addStringSet(
+		"numero_documento",
+		documentProvided,
+		numeroDocumento,
+		true,
+	)
+
+	addStringSet(
+		"fuente_prospeccion",
+		sourceProvided,
+		fuenteProspeccion,
+		true,
+	)
+
+	addStringSet(
+		"origen_ruta",
+		routeProvided,
+		origenRuta,
+		true,
+	)
+
+	addStringSet(
+		"origen_componente",
+		componentProvided,
+		origenComponente,
+		true,
+	)
+
+	addStringSet(
+		"etapa_embudo",
+		stageProvided,
+		etapaEmbudo,
+		true,
+	)
+
+	addStringSet(
+		"lead",
+		leadTypeProvided,
+		leadTipo,
+		true,
+	)
+
+	if saleDateProvided {
+		param := addArg(fechaVenta)
+
+		setClauses = append(
+			setClauses,
+			fmt.Sprintf(
+				"fecha_venta = NULLIF(%s, '')::date",
+				param,
+			),
+		)
+	}
+
+	if body.MontoVenta != nil {
+		param := addArg(
+			*body.MontoVenta,
+		)
+
+		setClauses = append(
+			setClauses,
+			fmt.Sprintf(
+				"monto_venta = %s",
+				param,
+			),
+		)
+	}
+
+	if body.Atendido != nil {
+		param := addArg(
+			*body.Atendido,
+		)
+
+		setClauses = append(
+			setClauses,
+			fmt.Sprintf(
+				"atendido = %s",
+				param,
+			),
+		)
+	}
+
+	if body.Activo != nil {
+		param := addArg(
+			*body.Activo,
+		)
+
+		setClauses = append(
+			setClauses,
+			fmt.Sprintf(
+				"activo = %s",
+				param,
+			),
+		)
+	}
+
+	addUUIDSet(
+		"proyecto_id",
+		projectIDProvided,
+		proyectoID,
+		true,
+	)
+
+	addUUIDSet(
+		"campania_id",
+		campaignIDProvided,
+		campaniaID,
+		true,
+	)
+
+	addUUIDSet(
+		"estado_lead_id",
+		stateIDProvided,
+		estadoLeadID,
+		false,
+	)
+
+	addUUIDSet(
+		"asesor_id",
+		advisorIDProvided,
+		asesorID,
+		true,
+	)
+
+	if projectProvided &&
+		!projectIDProvided {
+		param := addArg(
+			proyectoInteres,
+		)
+
+		setClauses = append(
+			setClauses,
+			fmt.Sprintf(
+				`proyecto_id = COALESCE(
+					(
+						SELECT id
+						FROM proyectos
+						WHERE LOWER(TRIM(nombre)) =
+							LOWER(TRIM(%s))
+						  AND activo = TRUE
+						LIMIT 1
+					),
+					proyecto_id
+				)`,
+				param,
+			),
+		)
+	}
+
+	if len(setClauses) == 0 {
 		leadError(
 			c,
 			http.StatusBadRequest,
@@ -1002,198 +1381,29 @@ func (h *LeadHandler) UpdateLead(
 		return
 	}
 
-	result, err := h.DB.Exec(
-		c.Request.Context(),
+	setClauses = append(
+		setClauses,
+		"updated_at = NOW()",
+	)
+
+	query := fmt.Sprintf(
 		`
 			UPDATE leads
 			SET
-				nombres_completos =
-					CASE
-						WHEN $2::boolean
-						THEN $3
-						ELSE nombres_completos
-					END,
-
-				tipo_documento =
-					CASE
-						WHEN $4::boolean
-						THEN NULLIF($5, '')
-						ELSE tipo_documento
-					END,
-
-				numero_documento =
-					CASE
-						WHEN $6::boolean
-						THEN NULLIF($7, '')
-						ELSE numero_documento
-					END,
-
-				telefono =
-					CASE
-						WHEN $8::boolean
-						THEN $9
-						ELSE telefono
-					END,
-
-				email =
-					CASE
-						WHEN $10::boolean
-						THEN NULLIF($11, '')
-						ELSE email
-					END,
-
-				mensaje =
-					CASE
-						WHEN $12::boolean
-						THEN NULLIF($13, '')
-						ELSE mensaje
-					END,
-
-				proyecto_interes =
-					CASE
-						WHEN $14::boolean
-						THEN NULLIF($15, '')
-						ELSE proyecto_interes
-					END,
-
-				categoria_interes =
-					CASE
-						WHEN $16::boolean
-						THEN NULLIF($17, '')
-						ELSE categoria_interes
-					END,
-
-				fuente_prospeccion =
-					CASE
-						WHEN $18::boolean
-						THEN $19
-						ELSE fuente_prospeccion
-					END,
-
-				origen_ruta =
-					CASE
-						WHEN $20::boolean
-						THEN NULLIF($21, '')
-						ELSE origen_ruta
-					END,
-
-				origen_componente =
-					CASE
-						WHEN $22::boolean
-						THEN NULLIF($23, '')
-						ELSE origen_componente
-					END,
-
-				atendido =
-					CASE
-						WHEN $24::boolean
-						THEN $25
-						ELSE atendido
-					END,
-
-				activo =
-					CASE
-						WHEN $26::boolean
-						THEN $27
-						ELSE activo
-					END,
-
-				proyecto_id =
-					CASE
-						WHEN $28::boolean
-							THEN NULLIF($29, '')::uuid
-
-						WHEN $14::boolean
-							THEN (
-								SELECT id
-								FROM proyectos
-								WHERE LOWER(TRIM(nombre)) =
-									LOWER(TRIM($15))
-								  AND activo = TRUE
-								LIMIT 1
-							)
-
-						ELSE proyecto_id
-					END,
-
-				campania_id =
-					CASE
-						WHEN $30::boolean
-							THEN NULLIF($31, '')::uuid
-						ELSE campania_id
-					END,
-
-				estado_lead_id =
-					CASE
-						WHEN $32::boolean
-							THEN $33::uuid
-						ELSE estado_lead_id
-					END,
-
-				asesor_id =
-					CASE
-						WHEN $34::boolean
-							THEN NULLIF($35, '')::uuid
-						ELSE asesor_id
-					END,
-
-				updated_at = NOW()
-
+				%s
 			WHERE id = $1::uuid
 			  AND deleted_at IS NULL
 		`,
-		leadID, // $1
+		strings.Join(
+			setClauses,
+			",\n				",
+		),
+	)
 
-		nameProvided,     // $2
-		nombresCompletos, // $3
-
-		typeDocumentProvided, // $4
-		tipoDocumento,        // $5
-
-		documentProvided, // $6
-		numeroDocumento, // $7
-
-		phoneProvided, // $8
-		telefono,      // $9
-
-		emailProvided, // $10
-		email,         // $11
-
-		messageProvided, // $12
-		mensaje,         // $13
-
-		projectProvided,  // $14
-		proyectoInteres,  // $15
-
-		categoryProvided,  // $16
-		categoriaInteres,  // $17
-
-		sourceProvided,     // $18
-		fuenteProspeccion,  // $19
-
-		routeProvided, // $20
-		origenRuta,    // $21
-
-		componentProvided, // $22
-		origenComponente,  // $23
-
-		body.Atendido != nil, // $24
-		boolValue(body.Atendido), // $25
-
-		body.Activo != nil, // $26
-		boolValue(body.Activo), // $27
-
-		projectIDProvided, // $28
-		proyectoID,        // $29
-
-		campaignIDProvided, // $30
-		campaniaID,         // $31
-
-		stateIDProvided, // $32
-		estadoLeadID,    // $33
-
-		advisorIDProvided, // $34
-		asesorID,          // $35
+	result, err := h.DB.Exec(
+		c.Request.Context(),
+		query,
+		args...,
 	)
 
 	if err != nil {
@@ -1400,22 +1610,23 @@ func leadOptionalDigits(
 	return false, ""
 }
 
-func boolValue(
-	value *bool,
-) bool {
-	if value == nil {
-		return false
-	}
-
-	return *value
-}
-
 func isValidUUID(
 	value string,
 ) bool {
 	return uuidPattern.MatchString(
 		strings.TrimSpace(value),
 	)
+}
+
+func isValidDate(
+	value string,
+) bool {
+	_, err := time.Parse(
+		"2006-01-02",
+		value,
+	)
+
+	return err == nil
 }
 
 func leadError(

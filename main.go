@@ -14,10 +14,26 @@ import (
 )
 
 func main() {
+	// Carga las variables de entorno.
 	cfg := config.Load()
+
+	// Verifica la configuración de PostgreSQL.
+	if cfg.DatabaseURL == "" {
+		log.Fatal(
+			"DATABASE_URL no está configurada.",
+		)
+	}
+
+	// Verifica la clave utilizada para firmar JWT.
+	if cfg.JWTSecret == "" {
+		log.Fatal(
+			"JWT_SECRET no está configurada.",
+		)
+	}
 
 	ctx := context.Background()
 
+	// Crea el pool de conexiones.
 	dbPool, err := pgxpool.New(
 		ctx,
 		cfg.DatabaseURL,
@@ -31,6 +47,7 @@ func main() {
 
 	defer dbPool.Close()
 
+	// Comprueba que PostgreSQL esté disponible.
 	if err := dbPool.Ping(ctx); err != nil {
 		log.Fatal(
 			"No se pudo verificar la conexión con PostgreSQL: ",
@@ -40,10 +57,7 @@ func main() {
 
 	router := gin.Default()
 
-	/*
-		Evita la advertencia de Gin sobre
-		proxies de confianza.
-	*/
+	// Evita usar proxies de confianza no configurados.
 	if err := router.SetTrustedProxies(nil); err != nil {
 		log.Fatal(
 			"No se pudieron configurar los proxies: ",
@@ -51,6 +65,7 @@ func main() {
 		)
 	}
 
+	// Estado de la API.
 	router.GET(
 		"/health",
 		func(c *gin.Context) {
@@ -64,6 +79,7 @@ func main() {
 		},
 	)
 
+	// Ruta principal.
 	router.GET(
 		"/",
 		func(c *gin.Context) {
@@ -77,9 +93,14 @@ func main() {
 		},
 	)
 
-	/*
-		Inicialización de handlers.
-	*/
+	// Inicializa los handlers.
+	authHandler := handlers.NewAuthHandler(
+		dbPool,
+		cfg.JWTSecret,
+		cfg.JWTIssuer,
+		cfg.JWTExpiresHours,
+	)
+
 	leadHandler := handlers.NewLeadHandler(
 		dbPool,
 	)
@@ -92,31 +113,34 @@ func main() {
 		dbPool,
 	)
 
-	/*
-		Grupo principal de rutas.
-	*/
+	// Grupo principal de la API.
 	api := router.Group("/api")
 
+	// Rutas de autenticación.
+	routes.RegisterAuthRoutes(
+		api,
+		authHandler,
+	)
+
+	// Rutas de leads.
 	routes.RegisterLeadRoutes(
 		api,
 		leadHandler,
 	)
 
+	// Rutas de beneficios.
 	routes.RegisterBenefitsRoutes(
 		api,
 		benefitsHandler,
 	)
 
+	// Rutas de solicitudes de inversión.
 	routes.RegisterInvestmentRoutes(
 		api,
 		investmentHandler,
 	)
 
-	/*
-		Railway entrega PORT automáticamente.
-		En local se utiliza el puerto configurado
-		o 5000 como respaldo.
-	*/
+	// Railway asigna PORT automáticamente.
 	port := os.Getenv("PORT")
 
 	if port == "" {
