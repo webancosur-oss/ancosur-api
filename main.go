@@ -77,6 +77,9 @@ func main() {
 		},
 	)
 
+	/*
+		Inicialización de handlers.
+	*/
 	leadHandler := handlers.NewLeadHandler(
 		dbPool,
 	)
@@ -85,6 +88,13 @@ func main() {
 		dbPool,
 	)
 
+	investmentHandler := handlers.NewInvestmentHandler(
+		dbPool,
+	)
+
+	/*
+		Grupo principal de rutas.
+	*/
 	api := router.Group("/api")
 
 	routes.RegisterLeadRoutes(
@@ -95,6 +105,11 @@ func main() {
 	routes.RegisterBenefitsRoutes(
 		api,
 		benefitsHandler,
+	)
+
+	routes.RegisterInvestmentRoutes(
+		api,
+		investmentHandler,
 	)
 
 	/*
