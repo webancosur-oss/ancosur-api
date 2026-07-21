@@ -2,166 +2,174 @@ package main
 
 import (
 	"ancosur-api/config"
-	"ancosur-api/handlers"
 	"ancosur-api/routes"
 	"context"
+	"fmt"
 	"log"
 	"net/http"
-	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
-	// Carga las variables de entorno.
-	cfg := config.Load()
+	appConfig := config.Load()
 
-	// Verifica la configuración de PostgreSQL.
-	if cfg.DatabaseURL == "" {
-		log.Fatal(
-			"DATABASE_URL no está configurada.",
-		)
-	}
-
-	// Verifica la clave utilizada para firmar JWT.
-	if cfg.JWTSecret == "" {
-		log.Fatal(
-			"JWT_SECRET no está configurada.",
-		)
-	}
-
-	ctx := context.Background()
-
-	// Crea el pool de conexiones.
-	dbPool, err := pgxpool.New(
-		ctx,
-		cfg.DatabaseURL,
-	)
+	db, err := connectDatabase(appConfig.DatabaseURL)
 	if err != nil {
-		log.Fatal(
-			"No se pudo conectar a PostgreSQL: ",
-			err,
-		)
+		log.Fatal("Error conectando a PostgreSQL: ", err)
 	}
 
-	defer dbPool.Close()
-
-	// Comprueba que PostgreSQL esté disponible.
-	if err := dbPool.Ping(ctx); err != nil {
-		log.Fatal(
-			"No se pudo verificar la conexión con PostgreSQL: ",
-			err,
-		)
-	}
+	defer db.Close()
 
 	router := gin.Default()
 
-	// Evita usar proxies de confianza no configurados.
-	if err := router.SetTrustedProxies(nil); err != nil {
-		log.Fatal(
-			"No se pudieron configurar los proxies: ",
-			err,
-		)
-	}
+	enableCORS(router, appConfig.FrontendURLs)
 
-	// Estado de la API.
-	router.GET(
-		"/health",
-		func(c *gin.Context) {
-			c.JSON(
-				http.StatusOK,
-				gin.H{
-					"status":  "ok",
-					"service": "ancosur-api",
-				},
-			)
-		},
-	)
+	router.GET("/", HomeHandler)
+	router.GET("/health", HealthHandler(db))
 
-	// Ruta principal.
-	router.GET(
-		"/",
-		func(c *gin.Context) {
-			c.JSON(
-				http.StatusOK,
-				gin.H{
-					"success": true,
-					"message": "API ANCOSUR funcionando.",
-				},
-			)
-		},
-	)
+	router.Static("/public", "./public")
 
-	// Inicializa los handlers.
-	authHandler := handlers.NewAuthHandler(
-		dbPool,
-		cfg.JWTSecret,
-		cfg.JWTIssuer,
-		cfg.JWTExpiresHours,
-	)
-
-	leadHandler := handlers.NewLeadHandler(
-		dbPool,
-	)
-
-	benefitsHandler := handlers.NewBenefitsHandler(
-		dbPool,
-	)
-
-	investmentHandler := handlers.NewInvestmentHandler(
-		dbPool,
-	)
-
-	// Grupo principal de la API.
 	api := router.Group("/api")
 
-	// Rutas de autenticación.
-	routes.RegisterAuthRoutes(
-		api,
-		authHandler,
-	)
+	// Rutas públicas y protegidas manejadas dentro de cada archivo
+	routes.RutasAuth(api, db)
+	routes.RutasLeads(api, db)
+	routes.RutasUsers(api, db)
+	routes.RutasAsesores(api, db)
+	routes.RutasEstadoLeads(api, db)
 
-	// Rutas de leads.
-	routes.RegisterLeadRoutes(
-		api,
-		leadHandler,
-	)
+	// routes.RutasProyectos(api, db)
+	// routes.RutasCampanias(api, db)
+	// routes.RutasInversiones(api, db)
+	// routes.RutasTerrenos(api, db)
+	// routes.RutasClientes(api, db)
 
-	// Rutas de beneficios.
-	routes.RegisterBenefitsRoutes(
-		api,
-		benefitsHandler,
-	)
+	fmt.Println("Server on port " + appConfig.Port)
 
-	// Rutas de solicitudes de inversión.
-	routes.RegisterInvestmentRoutes(
-		api,
-		investmentHandler,
-	)
+	if err := router.Run(":" + appConfig.Port); err != nil {
+		log.Fatal("Error iniciando servidor: ", err)
+	}
+}
 
-	// Railway asigna PORT automáticamente.
-	port := os.Getenv("PORT")
-
-	if port == "" {
-		port = cfg.Port
+func connectDatabase(databaseURL string) (*pgxpool.Pool, error) {
+	if databaseURL == "" {
+		return nil, fmt.Errorf("DATABASE_URL no está configurada ni se pudo generar con DB_HOST, DB_PORT, DB_NAME, DB_USER y DB_PASSWORD")
 	}
 
-	if port == "" {
-		port = "5000"
+	configDB, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, err
 	}
 
-	address := "0.0.0.0:" + port
+	configDB.MaxConns = 10
+	configDB.MinConns = 1
+	configDB.MaxConnLifetime = time.Hour
+	configDB.MaxConnIdleTime = time.Minute * 30
 
-	log.Printf(
-		"API ANCOSUR ejecutándose en http://localhost:%s",
-		port,
+	db, err := pgxpool.NewWithConfig(
+		context.Background(),
+		configDB,
 	)
 
-	if err := router.Run(address); err != nil {
-		log.Fatal(
-			"No se pudo iniciar el servidor: ",
-			err,
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+
+	defer cancel()
+
+	if err := db.Ping(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	return db, nil
+}
+
+func HomeHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"api":     "API ANCOSUR Dashboard",
+		"version": "1.0.0",
+		"message": "Servicio disponible.",
+	})
+}
+
+func HealthHandler(db *pgxpool.Pool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(
+			c.Request.Context(),
+			3*time.Second,
 		)
+
+		defer cancel()
+
+		if err := db.Ping(ctx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"success": false,
+				"api":     "API ANCOSUR Dashboard",
+				"db":      "error",
+				"message": "No hay conexión con la base de datos.",
+				"error":   err.Error(),
+			})
+
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"api":     "API ANCOSUR Dashboard",
+			"db":      "ok",
+			"message": "API y base de datos disponibles.",
+		})
 	}
+}
+
+func enableCORS(
+	router *gin.Engine,
+	frontendURLs []string,
+) {
+	router.Use(func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+
+		if origin == "" {
+			origin = "http://localhost:3000"
+		}
+
+		allowedOrigin := ""
+
+		for _, allowed := range frontendURLs {
+			if origin == allowed {
+				allowedOrigin = origin
+				break
+			}
+		}
+
+		if allowedOrigin == "" && len(frontendURLs) > 0 {
+			allowedOrigin = frontendURLs[0]
+		}
+
+		if allowedOrigin == "" {
+			allowedOrigin = "http://localhost:3000"
+		}
+
+		c.Writer.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Access-Token")
+
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	})
 }
