@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -40,7 +41,9 @@ func main() {
 	routes.RutasUsers(api, db)
 	routes.RutasAsesores(api, db)
 	routes.RutasEstadoLeads(api, db)
-
+	routes.RutasFormularios(api, db)
+	routes.RutasPostulaciones(api, db)
+	routes.RutasConvocatorias(api, db)
 	// routes.RutasProyectos(api, db)
 	// routes.RutasCampanias(api, db)
 	// routes.RutasInversiones(api, db)
@@ -137,36 +140,85 @@ func enableCORS(
 	frontendURLs []string,
 ) {
 	router.Use(func(c *gin.Context) {
-		origin := c.Request.Header.Get("Origin")
+		origin :=
+			c.Request.Header.Get("Origin")
 
-		if origin == "" {
-			origin = "http://localhost:3000"
-		}
-
-		allowedOrigin := ""
+		allowedOrigins :=
+			map[string]bool{
+				"http://localhost:3000": true,
+				"http://localhost:3001": true,
+				"http://localhost:3002": true,
+				"http://localhost:3003": true,
+			}
 
 		for _, allowed := range frontendURLs {
-			if origin == allowed {
-				allowedOrigin = origin
-				break
+
+			allowed =
+				strings.TrimSpace(
+					allowed,
+				)
+
+			if allowed != "" {
+				allowedOrigins[allowed] =
+					true
 			}
 		}
 
-		if allowedOrigin == "" && len(frontendURLs) > 0 {
-			allowedOrigin = frontendURLs[0]
+		/*
+			Las peticiones de Postman,
+			backend o server-to-server
+			pueden no tener Origin.
+		*/
+		if origin == "" {
+			c.Next()
+			return
 		}
 
-		if allowedOrigin == "" {
-			allowedOrigin = "http://localhost:3000"
+		if !allowedOrigins[origin] {
+			c.AbortWithStatusJSON(
+				http.StatusForbidden,
+				gin.H{
+					"success": false,
+					"message": "Origen no permitido por CORS.",
+					"origin":  origin,
+				},
+			)
+
+			return
 		}
 
-		c.Writer.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Access-Token")
+		c.Writer.Header().Set(
+			"Access-Control-Allow-Origin",
+			origin,
+		)
 
-		if c.Request.Method == http.MethodOptions {
-			c.AbortWithStatus(http.StatusNoContent)
+		c.Writer.Header().Set(
+			"Vary",
+			"Origin",
+		)
+
+		c.Writer.Header().Set(
+			"Access-Control-Allow-Credentials",
+			"true",
+		)
+
+		c.Writer.Header().Set(
+			"Access-Control-Allow-Methods",
+			"GET, POST, PUT, PATCH, DELETE, OPTIONS",
+		)
+
+		c.Writer.Header().Set(
+			"Access-Control-Allow-Headers",
+			"Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Access-Token",
+		)
+
+		if c.Request.Method ==
+			http.MethodOptions {
+
+			c.AbortWithStatus(
+				http.StatusNoContent,
+			)
+
 			return
 		}
 
