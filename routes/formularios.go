@@ -40,6 +40,9 @@ type FormularioWebRequest struct {
 	URLPagina        string `json:"url_pagina"`
 	PaginaReferencia string `json:"pagina_referencia"`
 
+	AsesorID string `json:"asesor_id"`
+	Asesor   string `json:"asesor"`
+
 	UTMSource   string `json:"utm_source"`
 	UTMMedium   string `json:"utm_medium"`
 	UTMCampaign string `json:"utm_campaign"`
@@ -242,6 +245,7 @@ func crearFormularioWeb(
 					error_crm,
 					enviado_crm_en,
 
+					asesor_id,
 					datos_originales,
 
 					crm_lead_id
@@ -285,7 +289,8 @@ func crearFormularioWeb(
 					NULL,
 					NULL,
 
-					$23::jsonb,
+					NULLIF($23, '')::uuid,
+					$24::jsonb,
 
 					NULL
 				)
@@ -321,14 +326,16 @@ func crearFormularioWeb(
 				request.UTMContent,
 				request.UTMTerm,
 
+				request.AsesorID,
+
 				string(
 					datosOriginales,
 				),
 			).
-			Scan(
-				&id,
-				&creadoEn,
-			)
+				Scan(
+					&id,
+					&creadoEn,
+				)
 
 		if err != nil {
 			c.JSON(
@@ -376,14 +383,11 @@ func crearFormularioWeb(
 
 		clientMetadata :=
 			map[string]string{
-				"origenRuta":
-					request.RutaPagina,
+				"origenRuta": request.RutaPagina,
 
-				"origenComponente":
-					request.NombreFormulario,
+				"origenComponente": request.NombreFormulario,
 
-				"tipoLead":
-					"WEB Ancosur",
+				"tipoLead": "WEB Ancosur",
 			}
 
 		if request.Proyecto != "" {
@@ -440,31 +444,23 @@ func crearFormularioWeb(
 
 		crmPayload :=
 			CRMLeadPayload{
-				FuenteID:
-					4,
+				FuenteID: 4,
 
-				Telefono:
-					request.Telefono,
+				Telefono: request.Telefono,
 
-				Nombre:
-					request.Nombre,
+				Nombre: request.Nombre,
 
-				Email:
-					request.Email,
+				Email: request.Email,
 
-				DNI:
-					request.DNI,
+				DNI: request.DNI,
 
-				Campania:
-					request.Campania,
+				Campania: request.Campania,
 
-				Anuncio:
-					request.Anuncio,
+				Anuncio: request.Anuncio,
 
-				MsjClient:
-					string(
-						msjClient,
-					),
+				MsjClient: string(
+					msjClient,
+				),
 			}
 
 		crmBody, err :=
@@ -548,8 +544,7 @@ func crearFormularioWeb(
 
 		crmClient :=
 			&http.Client{
-				Timeout:
-					20 * time.Second,
+				Timeout: 20 * time.Second,
 			}
 
 		crmHTTPResponse, err :=
@@ -701,44 +696,32 @@ func crearFormularioWeb(
 				gin.H{
 					"success": true,
 
-					"message":
-						"El lead llegó al CRM, pero no se pudo actualizar el estado local.",
+					"message": "El lead llegó al CRM, pero no se pudo actualizar el estado local.",
 
 					"data": gin.H{
-						"id":
-							id,
+						"id": id,
 
-						"creado_en":
-							creadoEn,
+						"creado_en": creadoEn,
 
-						"guardado_local":
-							true,
+						"guardado_local": true,
 
-						"estado_crm":
-							"enviado",
+						"estado_crm": "enviado",
 
 						"crm": gin.H{
-							"success":
-								true,
+							"success": true,
 
-							"estado":
-								"enviado",
+							"estado": "enviado",
 
-							"lead_id":
-								crmResult.LeadID,
+							"lead_id": crmResult.LeadID,
 
-							"accion":
-								crmResult.Accion,
+							"accion": crmResult.Accion,
 
-							"http_status":
-								crmHTTPResponse.StatusCode,
+							"http_status": crmHTTPResponse.StatusCode,
 
-							"message":
-								crmResult.Message,
+							"message": crmResult.Message,
 						},
 
-						"error_actualizacion_local":
-							updateErr.Error(),
+						"error_actualizacion_local": updateErr.Error(),
 					},
 				},
 			)
@@ -749,47 +732,33 @@ func crearFormularioWeb(
 		c.JSON(
 			http.StatusCreated,
 			gin.H{
-				"success":
-					true,
+				"success": true,
 
-				"message":
-					"Formulario guardado y enviado al CRM correctamente.",
+				"message": "Formulario guardado y enviado al CRM correctamente.",
 
-				"data":
-					gin.H{
-						"id":
-							id,
+				"data": gin.H{
+					"id": id,
 
-						"creado_en":
-							creadoEn,
+					"creado_en": creadoEn,
 
-						"guardado_local":
-							true,
+					"guardado_local": true,
 
-						"estado_crm":
-							"enviado",
+					"estado_crm": "enviado",
 
-						"crm":
-							gin.H{
-								"success":
-									true,
+					"crm": gin.H{
+						"success": true,
 
-								"estado":
-									"enviado",
+						"estado": "enviado",
 
-								"lead_id":
-									crmResult.LeadID,
+						"lead_id": crmResult.LeadID,
 
-								"accion":
-									crmResult.Accion,
+						"accion": crmResult.Accion,
 
-								"http_status":
-									crmHTTPResponse.StatusCode,
+						"http_status": crmHTTPResponse.StatusCode,
 
-								"message":
-									crmResult.Message,
-							},
+						"message": crmResult.Message,
 					},
+				},
 			},
 		)
 	}
@@ -806,14 +775,12 @@ func analizarRespuestaCRM(
 ) CRMResult {
 	result :=
 		CRMResult{
-			Success:
-				httpStatus >= 200 &&
-					httpStatus < 300,
+			Success: httpStatus >= 200 &&
+				httpStatus < 300,
 
-			Message:
-				http.StatusText(
-					httpStatus,
-				),
+			Message: http.StatusText(
+				httpStatus,
+			),
 		}
 
 	if len(responseBody) == 0 {
@@ -974,7 +941,7 @@ func obtenerString(
 	key string,
 ) string {
 	value,
-	exists :=
+		exists :=
 		data[key]
 
 	if !exists ||
@@ -983,7 +950,7 @@ func obtenerString(
 	}
 
 	text,
-	ok :=
+		ok :=
 		value.(string)
 
 	if !ok {
@@ -1000,7 +967,7 @@ func obtenerInt64(
 	key string,
 ) int64 {
 	value,
-	exists :=
+		exists :=
 		data[key]
 
 	if !exists ||
@@ -1044,20 +1011,15 @@ func guardarCRMError(
 ) {
 	respuesta :=
 		map[string]any{
-			"success":
-				false,
+			"success": false,
 
-			"estado":
-				"error",
+			"estado": "error",
 
-			"codigo":
-				errorCode,
+			"codigo": errorCode,
 
-			"message":
-				errorMessage,
+			"message": errorMessage,
 
-			"fecha":
-				time.Now(),
+			"fecha": time.Now(),
 		}
 
 	if httpStatus > 0 {
@@ -1145,17 +1107,13 @@ func responderCRMError(
 ) {
 	crm :=
 		gin.H{
-			"success":
-				false,
+			"success": false,
 
-			"estado":
-				"error",
+			"estado": "error",
 
-			"codigo":
-				codigo,
+			"codigo": codigo,
 
-			"message":
-				mensaje,
+			"message": mensaje,
 		}
 
 	if httpStatus > 0 {
@@ -1166,29 +1124,21 @@ func responderCRMError(
 	c.JSON(
 		http.StatusCreated,
 		gin.H{
-			"success":
-				true,
+			"success": true,
 
-			"message":
-				"Formulario guardado correctamente.",
+			"message": "Formulario guardado correctamente.",
 
-			"data":
-				gin.H{
-					"id":
-						id,
+			"data": gin.H{
+				"id": id,
 
-					"creado_en":
-						creadoEn,
+				"creado_en": creadoEn,
 
-					"guardado_local":
-						true,
+				"guardado_local": true,
 
-					"estado_crm":
-						"error",
+				"estado_crm": "error",
 
-					"crm":
-						crm,
-				},
+				"crm": crm,
+			},
 		},
 	)
 }
@@ -1285,6 +1235,16 @@ func normalizarFormulario(
 			request.PaginaReferencia,
 		)
 
+	request.AsesorID =
+		strings.TrimSpace(
+			request.AsesorID,
+		)
+
+	request.Asesor =
+		strings.TrimSpace(
+			request.Asesor,
+		)
+
 	request.UTMSource =
 		strings.TrimSpace(
 			request.UTMSource,
@@ -1316,8 +1276,7 @@ func soloNumerosFormulario(
 ) string {
 	var result strings.Builder
 
-	for _, char :=
-		range value {
+	for _, char := range value {
 
 		if char >= '0' &&
 			char <= '9' {
@@ -1342,8 +1301,7 @@ func telefonoFormularioValido(
 		return false
 	}
 
-	for _, char :=
-		range telefono {
+	for _, char := range telefono {
 
 		if char < '0' ||
 			char > '9' {
@@ -1362,8 +1320,7 @@ func dniFormularioValido(
 		return false
 	}
 
-	for _, char :=
-		range dni {
+	for _, char := range dni {
 
 		if char < '0' ||
 			char > '9' {
@@ -1393,67 +1350,80 @@ func listarFormulariosWeb(
 			db.Query(
 				ctx,
 				`
-				SELECT
-					id::text,
+		SELECT
+			l.id::text,
 
-					codigo_formulario,
-					nombre_formulario,
-					tipo_formulario,
+			l.codigo_formulario,
+			l.nombre_formulario,
+			l.tipo_formulario,
 
-					nombre_completo,
-					celular,
-					COALESCE(correo, ''),
-					COALESCE(documento, ''),
-					COALESCE(mensaje, ''),
+			l.nombre_completo,
+			l.celular,
+			COALESCE(l.correo, ''),
+			COALESCE(l.documento, ''),
+			COALESCE(l.mensaje, ''),
 
-					COALESCE(proyecto, ''),
-					COALESCE(tipo_inmueble, ''),
-					COALESCE(interes, ''),
-					COALESCE(horario_visita, ''),
+			COALESCE(l.proyecto, ''),
+			COALESCE(l.tipo_inmueble, ''),
+			COALESCE(l.interes, ''),
+			COALESCE(l.horario_visita, ''),
 
-					COALESCE(campaña, ''),
-					COALESCE(anuncio, ''),
+			COALESCE(l.campaña, ''),
+			COALESCE(l.anuncio, ''),
 
-					fuente_id,
+			l.fuente_id,
 
-					COALESCE(
-						fuente_descripcion,
-						''
-					),
+			COALESCE(
+				l.fuente_descripcion,
+				''
+			),
 
-					COALESCE(ruta_pagina, ''),
-					COALESCE(url_pagina, ''),
+			COALESCE(l.ruta_pagina, ''),
+			COALESCE(l.url_pagina, ''),
 
-					COALESCE(utm_source, ''),
-					COALESCE(utm_medium, ''),
-					COALESCE(utm_campaign, ''),
+			COALESCE(l.utm_source, ''),
+			COALESCE(l.utm_medium, ''),
+			COALESCE(l.utm_campaign, ''),
 
-					estado_crm,
+			l.estado_crm,
 
-					COALESCE(
-						codigo_http_crm,
-						0
-					),
+			COALESCE(
+				l.codigo_http_crm,
+				0
+			),
 
-					COALESCE(
-						crm_lead_id,
-						0
-					),
+			COALESCE(
+				l.crm_lead_id,
+				0
+			),
 
-					COALESCE(
-						error_crm,
-						''
-					),
+			COALESCE(
+				l.error_crm,
+				''
+			),
 
-					creado_en,
+			l.creado_en,
 
-					enviado_crm_en
+			l.enviado_crm_en,
 
-				FROM leads_web
+			COALESCE(
+				l.asesor_id::text,
+				''
+			) AS asesor_id,
 
-				ORDER BY
-					creado_en DESC
-				`,
+			COALESCE(
+				a.nombres_completos,
+				''
+			) AS asesor
+
+		FROM leads_web AS l
+
+		LEFT JOIN asesores AS a
+			ON a.id = l.asesor_id
+
+		ORDER BY
+			l.creado_en DESC
+		`,
 			)
 
 		if err != nil {
@@ -1514,6 +1484,9 @@ func listarFormulariosWeb(
 			CreadoEn time.Time `json:"creado_en"`
 
 			EnviadoCRMEn *time.Time `json:"enviado_crm_en"`
+
+			AsesorID string `json:"asesor_id"`
+			Asesor   string `json:"asesor"`
 		}
 
 		leads :=
@@ -1568,6 +1541,9 @@ func listarFormulariosWeb(
 					&lead.CreadoEn,
 
 					&lead.EnviadoCRMEn,
+
+					&lead.AsesorID,
+					&lead.Asesor,
 				)
 
 			if err != nil {
