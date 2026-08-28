@@ -71,6 +71,26 @@ type CRMResult struct {
 	Message string
 }
 
+type ActualizarSeguimientoRequest struct {
+	ContactoRealizado bool   `json:"contacto_realizado"`
+	LlamadaRealizada  bool   `json:"llamada_realizada"`
+	WhatsAppRealizado bool   `json:"whatsapp_realizado"`
+	Respondio         bool   `json:"respondio"`
+	MotivoNoContacto  string `json:"motivo_no_contacto"`
+
+	VisitaGenerada  bool       `json:"visita_generada"`
+	VisitaRealizada bool       `json:"visita_realizada"`
+	FechaVisita     *time.Time `json:"fecha_visita"`
+	ResultadoVisita string     `json:"resultado_visita"`
+
+	HuboPropuesta bool       `json:"hubo_propuesta"`
+	HuboVenta     bool       `json:"hubo_venta"`
+	FechaVenta    *time.Time `json:"fecha_venta"`
+
+	MotivoNoVenta string `json:"motivo_no_venta"`
+	Observaciones string `json:"observaciones_comerciales"`
+}
+
 /* RUTAS */
 
 func RutasFormularios(
@@ -86,6 +106,256 @@ func RutasFormularios(
 		"/formularios",
 		listarFormulariosWeb(db),
 	)
+
+	api.PUT(
+		"/formularios/:id/seguimiento",
+		actualizarSeguimientoFormularioWeb(db),
+	)
+}
+
+/* PUT */
+func actualizarSeguimientoFormularioWeb(
+	db *pgxpool.Pool,
+) gin.HandlerFunc {
+	return func(c *gin.Context) {
+
+		id := strings.TrimSpace(
+			c.Param("id"),
+		)
+
+		if id == "" {
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "El ID del lead es obligatorio.",
+				},
+			)
+
+			return
+		}
+
+		var request ActualizarSeguimientoRequest
+
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "Los datos enviados no son válidos.",
+					"error":   err.Error(),
+				},
+			)
+
+			return
+		}
+
+		/* =========================================
+		   NORMALIZAR TEXTOS
+		========================================= */
+
+		request.MotivoNoContacto =
+			strings.TrimSpace(
+				request.MotivoNoContacto,
+			)
+
+		request.ResultadoVisita =
+			strings.TrimSpace(
+				request.ResultadoVisita,
+			)
+
+		request.MotivoNoVenta =
+			strings.TrimSpace(
+				request.MotivoNoVenta,
+			)
+
+		request.Observaciones =
+			strings.TrimSpace(
+				request.Observaciones,
+			)
+
+		/* =========================================
+		   VALIDACIONES
+		========================================= */
+
+		if request.VisitaRealizada &&
+			request.FechaVisita == nil {
+
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "Debe indicar la fecha de la visita realizada.",
+				},
+			)
+
+			return
+		}
+
+		if request.HuboVenta &&
+			request.FechaVenta == nil {
+
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "Debe indicar la fecha de la venta.",
+				},
+			)
+
+			return
+		}
+
+		if request.HuboVenta {
+			request.MotivoNoVenta = ""
+		}
+
+		if request.VisitaRealizada {
+			request.VisitaGenerada = true
+		}
+
+		if request.HuboVenta {
+			request.HuboPropuesta = true
+		}
+
+		/* =========================================
+		   ACTUALIZAR
+		========================================= */
+
+		ctx, cancel :=
+			context.WithTimeout(
+				c.Request.Context(),
+				8*time.Second,
+			)
+
+		defer cancel()
+
+		var actualizadoID string
+
+		err :=
+			db.QueryRow(
+				ctx,
+				`
+				UPDATE leads_web
+				SET
+					contacto_realizado =
+						$2,
+
+					llamada_realizada =
+						$3,
+
+					whatsapp_realizado =
+						$4,
+
+					respondio =
+						$5,
+
+					motivo_no_contacto =
+						NULLIF($6, ''),
+
+					visita_generada =
+						$7,
+
+					visita_realizada =
+						$8,
+
+					fecha_visita =
+						$9,
+
+					resultado_visita =
+						NULLIF($10, ''),
+
+					hubo_propuesta =
+						$11,
+
+					hubo_venta =
+						$12,
+
+					fecha_venta =
+						$13,
+
+					motivo_no_venta =
+						NULLIF($14, ''),
+
+					observaciones_comerciales =
+						NULLIF($15, ''),
+
+					actualizado_en =
+						NOW()
+
+				WHERE id =
+					$1::uuid
+
+				RETURNING id::text
+				`,
+				id,
+
+				request.ContactoRealizado,
+				request.LlamadaRealizada,
+				request.WhatsAppRealizado,
+				request.Respondio,
+				request.MotivoNoContacto,
+
+				request.VisitaGenerada,
+				request.VisitaRealizada,
+				request.FechaVisita,
+				request.ResultadoVisita,
+
+				request.HuboPropuesta,
+				request.HuboVenta,
+				request.FechaVenta,
+
+				request.MotivoNoVenta,
+				request.Observaciones,
+			).
+				Scan(
+					&actualizadoID,
+				)
+
+		if err != nil {
+
+			if strings.Contains(
+				err.Error(),
+				"no rows",
+			) {
+				c.JSON(
+					http.StatusNotFound,
+					gin.H{
+						"success": false,
+						"message": "El lead no existe.",
+					},
+				)
+
+				return
+			}
+
+			c.JSON(
+				http.StatusInternalServerError,
+				gin.H{
+					"success": false,
+					"message": "No se pudo actualizar el seguimiento del lead.",
+					"error":   err.Error(),
+				},
+			)
+
+			return
+		}
+
+		/* =========================================
+		   RESPUESTA
+		========================================= */
+
+		c.JSON(
+			http.StatusOK,
+			gin.H{
+				"success": true,
+				"message": "Seguimiento actualizado correctamente.",
+				"data": gin.H{
+					"id": actualizadoID,
+				},
+			},
+		)
+	}
 }
 
 /* POST */
@@ -1338,6 +1608,7 @@ func listarFormulariosWeb(
 	db *pgxpool.Pool,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
+
 		ctx, cancel :=
 			context.WithTimeout(
 				c.Request.Context(),
@@ -1346,84 +1617,212 @@ func listarFormulariosWeb(
 
 		defer cancel()
 
+		/* =====================================================
+		   CONSULTA
+		===================================================== */
+
 		rows, err :=
 			db.Query(
 				ctx,
 				`
-		SELECT
-			l.id::text,
+				SELECT
+					l.id::text,
 
-			l.codigo_formulario,
-			l.nombre_formulario,
-			l.tipo_formulario,
+					l.codigo_formulario,
+					l.nombre_formulario,
+					l.tipo_formulario,
 
-			l.nombre_completo,
-			l.celular,
-			COALESCE(l.correo, ''),
-			COALESCE(l.documento, ''),
-			COALESCE(l.mensaje, ''),
+					l.nombre_completo,
+					l.celular,
 
-			COALESCE(l.proyecto, ''),
-			COALESCE(l.tipo_inmueble, ''),
-			COALESCE(l.interes, ''),
-			COALESCE(l.horario_visita, ''),
+					COALESCE(
+						l.correo,
+						''
+					),
 
-			COALESCE(l.campaña, ''),
-			COALESCE(l.anuncio, ''),
+					COALESCE(
+						l.documento,
+						''
+					),
 
-			l.fuente_id,
+					COALESCE(
+						l.mensaje,
+						''
+					),
 
-			COALESCE(
-				l.fuente_descripcion,
-				''
-			),
+					COALESCE(
+						l.proyecto,
+						''
+					),
 
-			COALESCE(l.ruta_pagina, ''),
-			COALESCE(l.url_pagina, ''),
+					COALESCE(
+						l.tipo_inmueble,
+						''
+					),
 
-			COALESCE(l.utm_source, ''),
-			COALESCE(l.utm_medium, ''),
-			COALESCE(l.utm_campaign, ''),
+					COALESCE(
+						l.interes,
+						''
+					),
 
-			l.estado_crm,
+					COALESCE(
+						l.horario_visita,
+						''
+					),
 
-			COALESCE(
-				l.codigo_http_crm,
-				0
-			),
+					COALESCE(
+						l.campaña,
+						''
+					),
 
-			COALESCE(
-				l.crm_lead_id,
-				0
-			),
+					COALESCE(
+						l.anuncio,
+						''
+					),
 
-			COALESCE(
-				l.error_crm,
-				''
-			),
+					l.fuente_id,
 
-			l.creado_en,
+					COALESCE(
+						l.fuente_descripcion,
+						''
+					),
 
-			l.enviado_crm_en,
+					COALESCE(
+						l.ruta_pagina,
+						''
+					),
 
-			COALESCE(
-				l.asesor_id::text,
-				''
-			) AS asesor_id,
+					COALESCE(
+						l.url_pagina,
+						''
+					),
 
-			COALESCE(
-				a.nombres_completos,
-				''
-			) AS asesor
+					COALESCE(
+						l.pagina_referencia,
+						''
+					),
 
-		FROM leads_web AS l
+					COALESCE(
+						l.utm_source,
+						''
+					),
 
-		LEFT JOIN asesores AS a
-			ON a.id = l.asesor_id
+					COALESCE(
+						l.utm_medium,
+						''
+					),
 
-		ORDER BY
-			l.creado_en DESC
-		`,
+					COALESCE(
+						l.utm_campaign,
+						''
+					),
+
+					COALESCE(
+						l.utm_content,
+						''
+					),
+
+					COALESCE(
+						l.utm_term,
+						''
+					),
+
+					l.estado_crm,
+
+					COALESCE(
+						l.codigo_http_crm,
+						0
+					),
+
+					COALESCE(
+						l.crm_lead_id,
+						0
+					),
+
+					COALESCE(
+						l.error_crm,
+						''
+					),
+
+					l.creado_en,
+
+					l.enviado_crm_en,
+
+					COALESCE(
+						l.asesor_id::text,
+						''
+					) AS asesor_id,
+
+					COALESCE(
+						a.nombres_completos,
+						''
+					) AS asesor,
+
+					COALESCE(
+						l.datos_originales,
+						'{}'::jsonb
+					) AS datos_originales,
+
+					/* =========================================
+					   SEGUIMIENTO DE CONTACTO
+					========================================= */
+
+					l.contacto_realizado,
+
+					l.llamada_realizada,
+
+					l.whatsapp_realizado,
+
+					l.respondio,
+
+					COALESCE(
+						l.motivo_no_contacto,
+						''
+					) AS motivo_no_contacto,
+
+					/* =========================================
+					   SEGUIMIENTO DE VISITA
+					========================================= */
+
+					l.visita_generada,
+
+					l.visita_realizada,
+
+					l.fecha_visita,
+
+					COALESCE(
+						l.resultado_visita,
+						''
+					) AS resultado_visita,
+
+					/* =========================================
+					   SEGUIMIENTO COMERCIAL
+					========================================= */
+
+					l.hubo_propuesta,
+
+					l.hubo_venta,
+
+					l.fecha_venta,
+
+					COALESCE(
+						l.motivo_no_venta,
+						''
+					) AS motivo_no_venta,
+
+					COALESCE(
+						l.observaciones_comerciales,
+						''
+					) AS observaciones_comerciales
+
+				FROM leads_web AS l
+
+				LEFT JOIN asesores AS a
+					ON a.id = l.asesor_id
+
+				ORDER BY
+					l.creado_en DESC
+				`,
 			)
 
 		if err != nil {
@@ -1440,6 +1839,10 @@ func listarFormulariosWeb(
 		}
 
 		defer rows.Close()
+
+		/* =====================================================
+		   MODELO DE RESPUESTA
+		===================================================== */
 
 		type LeadWeb struct {
 			ID string `json:"id"`
@@ -1466,12 +1869,15 @@ func listarFormulariosWeb(
 
 			FuenteDescripcion string `json:"fuente_descripcion"`
 
-			RutaPagina string `json:"ruta_pagina"`
-			URLPagina  string `json:"url_pagina"`
+			RutaPagina       string `json:"ruta_pagina"`
+			URLPagina        string `json:"url_pagina"`
+			PaginaReferencia string `json:"pagina_referencia"`
 
 			UTMSource   string `json:"utm_source"`
 			UTMMedium   string `json:"utm_medium"`
 			UTMCampaign string `json:"utm_campaign"`
+			UTMContent  string `json:"utm_content"`
+			UTMTerm     string `json:"utm_term"`
 
 			EstadoCRM string `json:"estado_crm"`
 
@@ -1486,7 +1892,50 @@ func listarFormulariosWeb(
 			EnviadoCRMEn *time.Time `json:"enviado_crm_en"`
 
 			AsesorID string `json:"asesor_id"`
-			Asesor   string `json:"asesor"`
+
+			Asesor string `json:"asesor"`
+
+			DatosOriginales json.RawMessage `json:"datos_originales"`
+
+			/* =========================================
+			   SEGUIMIENTO DE CONTACTO
+			========================================= */
+
+			ContactoRealizado bool `json:"contacto_realizado"`
+
+			LlamadaRealizada bool `json:"llamada_realizada"`
+
+			WhatsAppRealizado bool `json:"whatsapp_realizado"`
+
+			Respondio bool `json:"respondio"`
+
+			MotivoNoContacto string `json:"motivo_no_contacto"`
+
+			/* =========================================
+			   SEGUIMIENTO DE VISITA
+			========================================= */
+
+			VisitaGenerada bool `json:"visita_generada"`
+
+			VisitaRealizada bool `json:"visita_realizada"`
+
+			FechaVisita *time.Time `json:"fecha_visita"`
+
+			ResultadoVisita string `json:"resultado_visita"`
+
+			/* =========================================
+			   SEGUIMIENTO COMERCIAL
+			========================================= */
+
+			HuboPropuesta bool `json:"hubo_propuesta"`
+
+			HuboVenta bool `json:"hubo_venta"`
+
+			FechaVenta *time.Time `json:"fecha_venta"`
+
+			MotivoNoVenta string `json:"motivo_no_venta"`
+
+			ObservacionesComerciales string `json:"observaciones_comerciales"`
 		}
 
 		leads :=
@@ -1495,11 +1944,17 @@ func listarFormulariosWeb(
 				0,
 			)
 
+		/* =====================================================
+		   LEER RESULTADOS
+		===================================================== */
+
 		for rows.Next() {
+
 			var lead LeadWeb
 
 			err :=
 				rows.Scan(
+
 					&lead.ID,
 
 					&lead.CodigoFormulario,
@@ -1521,14 +1976,18 @@ func listarFormulariosWeb(
 					&lead.Anuncio,
 
 					&lead.FuenteID,
+
 					&lead.FuenteDescripcion,
 
 					&lead.RutaPagina,
 					&lead.URLPagina,
+					&lead.PaginaReferencia,
 
 					&lead.UTMSource,
 					&lead.UTMMedium,
 					&lead.UTMCampaign,
+					&lead.UTMContent,
+					&lead.UTMTerm,
 
 					&lead.EstadoCRM,
 
@@ -1544,9 +2003,52 @@ func listarFormulariosWeb(
 
 					&lead.AsesorID,
 					&lead.Asesor,
+
+					&lead.DatosOriginales,
+
+					/* =========================================
+					   SEGUIMIENTO DE CONTACTO
+					========================================= */
+
+					&lead.ContactoRealizado,
+
+					&lead.LlamadaRealizada,
+
+					&lead.WhatsAppRealizado,
+
+					&lead.Respondio,
+
+					&lead.MotivoNoContacto,
+
+					/* =========================================
+					   SEGUIMIENTO DE VISITA
+					========================================= */
+
+					&lead.VisitaGenerada,
+
+					&lead.VisitaRealizada,
+
+					&lead.FechaVisita,
+
+					&lead.ResultadoVisita,
+
+					/* =========================================
+					   SEGUIMIENTO COMERCIAL
+					========================================= */
+
+					&lead.HuboPropuesta,
+
+					&lead.HuboVenta,
+
+					&lead.FechaVenta,
+
+					&lead.MotivoNoVenta,
+
+					&lead.ObservacionesComerciales,
 				)
 
 			if err != nil {
+
 				c.JSON(
 					http.StatusInternalServerError,
 					gin.H{
@@ -1566,7 +2068,13 @@ func listarFormulariosWeb(
 				)
 		}
 
-		if err := rows.Err(); err != nil {
+		/* =====================================================
+		   ERROR DE ITERACIÓN
+		===================================================== */
+
+		if err :=
+			rows.Err(); err != nil {
+
 			c.JSON(
 				http.StatusInternalServerError,
 				gin.H{
@@ -1578,6 +2086,10 @@ func listarFormulariosWeb(
 
 			return
 		}
+
+		/* =====================================================
+		   RESPUESTA
+		===================================================== */
 
 		c.JSON(
 			http.StatusOK,
