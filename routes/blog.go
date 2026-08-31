@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -33,6 +34,10 @@ type BlogPost struct {
 	PublishedAt   *time.Time      `json:"published_at"`
 }
 
+/* =========================================================
+   REQUEST CREAR
+========================================================= */
+
 type CreateBlogRequest struct {
 	Title         string          `json:"title" binding:"required"`
 	Slug          string          `json:"slug" binding:"required"`
@@ -43,6 +48,10 @@ type CreateBlogRequest struct {
 	Status        string          `json:"status"`
 	AuthorName    string          `json:"author_name"`
 }
+
+/* =========================================================
+   REQUEST ACTUALIZAR
+========================================================= */
 
 type UpdateBlogRequest struct {
 	Title         string          `json:"title"`
@@ -56,102 +65,90 @@ type UpdateBlogRequest struct {
 }
 
 /* =========================================================
-   RUTAS DEL BLOG
+   RUTAS BLOG
 ========================================================= */
 
 func RutasBlog(
 	api *gin.RouterGroup,
 	db *pgxpool.Pool,
 ) {
-
 	blog := api.Group("/blog")
 
-	// =====================================================
-	// IMÁGENES
-	// =====================================================
+	/* =====================================================
+	   IMÁGENES
+	===================================================== */
 
-	// Subir una imagen
-	// POST /api/blog/imagen
 	blog.POST(
 		"/imagen",
 		SubirImagenBlog(db),
 	)
 
-	// Mostrar una imagen
-	// GET /api/blog/imagen/:id
 	blog.GET(
 		"/imagen/:id",
 		VerImagenBlog(db),
 	)
 
-	// =====================================================
-	// ADMINISTRACIÓN
-	// =====================================================
+	/* =====================================================
+	   ADMIN
+	===================================================== */
 
-	// Obtener artículo por ID para editar
-	// GET /api/blog/admin/:id
 	blog.GET(
 		"/admin/:id",
 		ObtenerBlogPorID(db),
 	)
 
-	// =====================================================
-	// CREAR
-	// =====================================================
+	/* =====================================================
+	   CREAR
+	===================================================== */
 
-	// Crear artículo
-	// POST /api/blog
 	blog.POST(
 		"",
 		CrearBlog(db),
 	)
 
-	// =====================================================
-	// LISTAR
-	// =====================================================
+	/* =====================================================
+	   LISTAR
+	===================================================== */
 
-	// Listar todos los artículos
-	// GET /api/blog
-	//
-	// También permite:
-	// GET /api/blog?status=publicado
-	// GET /api/blog?status=borrador
 	blog.GET(
 		"",
 		ListarBlog(db),
 	)
 
-	// =====================================================
-	// ACTUALIZAR
-	// =====================================================
+	/* =====================================================
+	   ACTUALIZAR
+	   
+	   IMPORTANTE:
+	   Acepta tanto ID como SLUG.
 
-	// Actualizar artículo
-	// PATCH /api/blog/:id
+	   PATCH /api/blog/:id
+	   PATCH /api/blog/:slug
+	===================================================== */
+
 	blog.PATCH(
 		"/:id",
 		ActualizarBlog(db),
 	)
 
-	// =====================================================
-	// ELIMINAR
-	// =====================================================
+	/* =====================================================
+	   ELIMINAR
+	   
+	   Acepta tanto ID como SLUG.
+	===================================================== */
 
-	// Eliminar artículo
-	// DELETE /api/blog/:id
 	blog.DELETE(
 		"/:id",
 		EliminarBlog(db),
 	)
 
-	// =====================================================
-	// WEB PÚBLICA
-	// =====================================================
+	/* =====================================================
+	   WEB PÚBLICA
+	   
+	   GET /api/blog/:slug
 
-	// Obtener artículo publicado por slug
-	// GET /api/blog/:slug
-	//
-	// ESTA DEBE SER LA ÚLTIMA RUTA
-	// porque :slug es dinámica.
+	   Esta ruta debe permanecer al final.
+	===================================================== */
+
 	blog.GET(
 		"/:slug",
 		ObtenerBlogPorSlug(db),
@@ -162,7 +159,9 @@ func RutasBlog(
    HELPERS
 ========================================================= */
 
-func normalizeBlogStatus(status string) string {
+func normalizeBlogStatus(
+	status string,
+) string {
 	status = strings.ToLower(
 		strings.TrimSpace(status),
 	)
@@ -174,13 +173,38 @@ func normalizeBlogStatus(status string) string {
 	return "borrador"
 }
 
-func normalizeSlug(slug string) string {
+func normalizeSlug(
+	slug string,
+) string {
 	return strings.Trim(
 		strings.ToLower(
 			slug,
 		),
 		" ",
 	)
+}
+
+/* =========================================================
+   VALIDAR CONTENT
+========================================================= */
+
+func validateBlogContent(
+	content json.RawMessage,
+) error {
+	if len(content) == 0 {
+		return nil
+	}
+
+	var value interface{}
+
+	if err := json.Unmarshal(
+		content,
+		&value,
+	); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 /* =========================================================
@@ -235,8 +259,11 @@ func CrearBlog(
 				req.AuthorName,
 			)
 
-		if req.Title == "" {
+		/* =================================================
+		   VALIDACIONES
+		================================================= */
 
+		if req.Title == "" {
 			c.JSON(
 				http.StatusBadRequest,
 				gin.H{
@@ -249,7 +276,6 @@ func CrearBlog(
 		}
 
 		if req.Slug == "" {
-
 			c.JSON(
 				http.StatusBadRequest,
 				gin.H{
@@ -262,7 +288,6 @@ func CrearBlog(
 		}
 
 		if req.Category == "" {
-
 			c.JSON(
 				http.StatusBadRequest,
 				gin.H{
@@ -275,22 +300,13 @@ func CrearBlog(
 		}
 
 		if len(req.Content) == 0 {
-
 			req.Content =
 				json.RawMessage(`[]`)
 		}
 
-		/*
-			Verificamos que content sea
-			JSON válido.
-		*/
-
-		var contentCheck interface{}
-
 		if err :=
-			json.Unmarshal(
+			validateBlogContent(
 				req.Content,
-				&contentCheck,
 			); err != nil {
 
 			c.JSON(
@@ -315,6 +331,10 @@ func CrearBlog(
 				"ANCOSUR Inmobiliaria"
 		}
 
+		/* =================================================
+		   CONTEXTO
+		================================================= */
+
 		ctx, cancel :=
 			context.WithTimeout(
 				c.Request.Context(),
@@ -323,11 +343,9 @@ func CrearBlog(
 
 		defer cancel()
 
-		/*
-			IMPORTANTE:
-			El slug es único.
-			No permitimos duplicados.
-		*/
+		/* =================================================
+		   VERIFICAR SLUG
+		================================================= */
 
 		var exists bool
 
@@ -371,6 +389,10 @@ func CrearBlog(
 			return
 		}
 
+		/* =================================================
+		   ID
+		================================================= */
+
 		id :=
 			uuid.New()
 
@@ -384,6 +406,10 @@ func CrearBlog(
 			publishedAt =
 				&now
 		}
+
+		/* =================================================
+		   INSERT
+		================================================= */
 
 		var post BlogPost
 
@@ -444,20 +470,20 @@ func CrearBlog(
 				req.AuthorName,
 				publishedAt,
 			).
-				Scan(
-					&post.ID,
-					&post.Title,
-					&post.Slug,
-					&post.Category,
-					&post.Excerpt,
-					&post.CoverImageURL,
-					&post.Content,
-					&post.Status,
-					&post.AuthorName,
-					&post.CreatedAt,
-					&post.UpdatedAt,
-					&post.PublishedAt,
-				)
+			Scan(
+				&post.ID,
+				&post.Title,
+				&post.Slug,
+				&post.Category,
+				&post.Excerpt,
+				&post.CoverImageURL,
+				&post.Content,
+				&post.Status,
+				&post.AuthorName,
+				&post.CreatedAt,
+				&post.UpdatedAt,
+				&post.PublishedAt,
+			)
 
 		if err != nil {
 
@@ -528,6 +554,11 @@ func ListarBlog(
 			[]interface{}{}
 
 		if status != "" {
+
+			status =
+				normalizeBlogStatus(
+					status,
+				)
 
 			query += `
 				WHERE status = $1
@@ -651,7 +682,22 @@ func ObtenerBlogPorID(
 	return func(c *gin.Context) {
 
 		id :=
-			c.Param("id")
+			strings.TrimSpace(
+				c.Param("id"),
+			)
+
+		if id == "" {
+
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "ID inválido.",
+				},
+			)
+
+			return
+		}
 
 		ctx, cancel :=
 			context.WithTimeout(
@@ -685,24 +731,25 @@ func ObtenerBlogPorID(
 				`,
 				id,
 			).
-				Scan(
-					&post.ID,
-					&post.Title,
-					&post.Slug,
-					&post.Category,
-					&post.Excerpt,
-					&post.CoverImageURL,
-					&post.Content,
-					&post.Status,
-					&post.AuthorName,
-					&post.CreatedAt,
-					&post.UpdatedAt,
-					&post.PublishedAt,
-				)
+			Scan(
+				&post.ID,
+				&post.Title,
+				&post.Slug,
+				&post.Category,
+				&post.Excerpt,
+				&post.CoverImageURL,
+				&post.Content,
+				&post.Status,
+				&post.AuthorName,
+				&post.CreatedAt,
+				&post.UpdatedAt,
+				&post.PublishedAt,
+			)
 
 		if err != nil {
 
-			if err == pgx.ErrNoRows {
+			if err ==
+				pgx.ErrNoRows {
 
 				c.JSON(
 					http.StatusNotFound,
@@ -785,24 +832,25 @@ func ObtenerBlogPorSlug(
 				`,
 				slug,
 			).
-				Scan(
-					&post.ID,
-					&post.Title,
-					&post.Slug,
-					&post.Category,
-					&post.Excerpt,
-					&post.CoverImageURL,
-					&post.Content,
-					&post.Status,
-					&post.AuthorName,
-					&post.CreatedAt,
-					&post.UpdatedAt,
-					&post.PublishedAt,
-				)
+			Scan(
+				&post.ID,
+				&post.Title,
+				&post.Slug,
+				&post.Category,
+				&post.Excerpt,
+				&post.CoverImageURL,
+				&post.Content,
+				&post.Status,
+				&post.AuthorName,
+				&post.CreatedAt,
+				&post.UpdatedAt,
+				&post.PublishedAt,
+			)
 
 		if err != nil {
 
-			if err == pgx.ErrNoRows {
+			if err ==
+				pgx.ErrNoRows {
 
 				c.JSON(
 					http.StatusNotFound,
@@ -838,7 +886,7 @@ func ObtenerBlogPorSlug(
 }
 
 /* =========================================================
-   ACTUALIZAR
+   ACTUALIZAR BLOG
 ========================================================= */
 
 func ActualizarBlog(
@@ -847,8 +895,35 @@ func ActualizarBlog(
 
 	return func(c *gin.Context) {
 
-		id :=
-			c.Param("id")
+		/*
+			IMPORTANTE:
+
+			El parámetro puede ser:
+
+			/api/blog/UUID
+			o
+			/api/blog/mi-slug
+
+			El frontend actualmente manda SLUG.
+		*/
+
+		identifier :=
+			strings.TrimSpace(
+				c.Param("id"),
+			)
+
+		if identifier == "" {
+
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "Identificador del artículo inválido.",
+				},
+			)
+
+			return
+		}
 
 		var req UpdateBlogRequest
 
@@ -866,6 +941,10 @@ func ActualizarBlog(
 
 			return
 		}
+
+		/* =================================================
+		   NORMALIZAR
+		================================================= */
 
 		req.Title =
 			strings.TrimSpace(
@@ -897,17 +976,63 @@ func ActualizarBlog(
 				req.Status,
 			)
 
+		if req.AuthorName == "" {
+			req.AuthorName =
+				"ANCOSUR Inmobiliaria"
+		}
+
+		/* =================================================
+		   VALIDACIONES
+		================================================= */
+
+		if req.Title == "" {
+
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "El título es obligatorio.",
+				},
+			)
+
+			return
+		}
+
+		if req.Slug == "" {
+
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "El slug es obligatorio.",
+				},
+			)
+
+			return
+		}
+
+		if req.Category == "" {
+
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "La categoría es obligatoria.",
+				},
+			)
+
+			return
+		}
+
 		if len(req.Content) == 0 {
+
 			req.Content =
 				json.RawMessage(`[]`)
 		}
 
-		var contentCheck interface{}
-
 		if err :=
-			json.Unmarshal(
+			validateBlogContent(
 				req.Content,
-				&contentCheck,
 			); err != nil {
 
 			c.JSON(
@@ -915,11 +1040,16 @@ func ActualizarBlog(
 				gin.H{
 					"success": false,
 					"message": "El contenido no tiene JSON válido.",
+					"error":   err.Error(),
 				},
 			)
 
 			return
 		}
+
+		/* =================================================
+		   CONTEXTO
+		================================================= */
 
 		ctx, cancel :=
 			context.WithTimeout(
@@ -929,36 +1059,137 @@ func ActualizarBlog(
 
 		defer cancel()
 
-		var publishedAt *time.Time
+		/* =================================================
+		   BUSCAR ARTÍCULO
+		   
+		   POR ID O POR SLUG
+		================================================= */
 
-		/*
-			Si se publica ahora y todavía
-			no tenía fecha, colocamos NOW().
-		*/
+		var (
+			currentID          string
+			currentSlug        string
+			currentPublishedAt *time.Time
+		)
+
+		err :=
+			db.QueryRow(
+				ctx,
+				`
+				SELECT
+					id,
+					slug,
+					published_at
+				FROM blog_posts
+				WHERE id::text = $1
+				   OR slug = $1
+				LIMIT 1
+				`,
+				identifier,
+			).
+			Scan(
+				&currentID,
+				&currentSlug,
+				&currentPublishedAt,
+			)
+
+		if err != nil {
+
+			if err ==
+				pgx.ErrNoRows {
+
+				c.JSON(
+					http.StatusNotFound,
+					gin.H{
+						"success": false,
+						"message": "El artículo que intentas actualizar no existe.",
+					},
+				)
+
+				return
+			}
+
+			c.JSON(
+				http.StatusInternalServerError,
+				gin.H{
+					"success": false,
+					"message": "No se pudo localizar el artículo.",
+					"error":   err.Error(),
+				},
+			)
+
+			return
+		}
+
+		/* =================================================
+		   VERIFICAR SLUG DUPLICADO
+		   
+		   EXCLUIMOS EL PROPIO ARTÍCULO.
+		================================================= */
+
+		var slugExists bool
+
+		err =
+			db.QueryRow(
+				ctx,
+				`
+				SELECT EXISTS(
+					SELECT 1
+					FROM blog_posts
+					WHERE slug = $1
+					  AND id::text <> $2
+				)
+				`,
+				req.Slug,
+				currentID,
+			).
+			Scan(
+				&slugExists,
+			)
+
+		if err != nil {
+
+			c.JSON(
+				http.StatusInternalServerError,
+				gin.H{
+					"success": false,
+					"message": "No se pudo verificar el nuevo slug.",
+					"error":   err.Error(),
+				},
+			)
+
+			return
+		}
+
+		if slugExists {
+
+			c.JSON(
+				http.StatusConflict,
+				gin.H{
+					"success": false,
+					"message": "El slug ya pertenece a otro artículo.",
+				},
+			)
+
+			return
+		}
+
+		/* =================================================
+		   PUBLISHED_AT
+		================================================= */
+
+		var publishedAt *time.Time
 
 		if status == "publicado" {
 
-			var currentPublished *time.Time
+			/*
+				Si ya estaba publicado,
+				conservamos la fecha original.
+			*/
 
-			err :=
-				db.QueryRow(
-					ctx,
-					`
-					SELECT published_at
-					FROM blog_posts
-					WHERE id = $1
-					`,
-					id,
-				).
-					Scan(
-						&currentPublished,
-					)
-
-			if err == nil &&
-				currentPublished != nil {
+			if currentPublishedAt != nil {
 
 				publishedAt =
-					currentPublished
+					currentPublishedAt
 
 			} else {
 
@@ -968,11 +1199,24 @@ func ActualizarBlog(
 				publishedAt =
 					&now
 			}
+
+		} else {
+
+			/*
+				Si vuelve a borrador,
+				quitamos published_at.
+			*/
+
+			publishedAt = nil
 		}
+
+		/* =================================================
+		   ACTUALIZAR
+		================================================= */
 
 		var post BlogPost
 
-		err :=
+		err =
 			db.QueryRow(
 				ctx,
 				`
@@ -988,7 +1232,8 @@ func ActualizarBlog(
 					author_name = $8,
 					updated_at = NOW(),
 					published_at = $9
-				WHERE id = $10
+				WHERE id::text = $10
+
 				RETURNING
 					id,
 					title,
@@ -1012,24 +1257,29 @@ func ActualizarBlog(
 				status,
 				req.AuthorName,
 				publishedAt,
-				id,
+				currentID,
 			).
-				Scan(
-					&post.ID,
-					&post.Title,
-					&post.Slug,
-					&post.Category,
-					&post.Excerpt,
-					&post.CoverImageURL,
-					&post.Content,
-					&post.Status,
-					&post.AuthorName,
-					&post.CreatedAt,
-					&post.UpdatedAt,
-					&post.PublishedAt,
-				)
+			Scan(
+				&post.ID,
+				&post.Title,
+				&post.Slug,
+				&post.Category,
+				&post.Excerpt,
+				&post.CoverImageURL,
+				&post.Content,
+				&post.Status,
+				&post.AuthorName,
+				&post.CreatedAt,
+				&post.UpdatedAt,
+				&post.PublishedAt,
+			)
 
 		if err != nil {
+
+			/*
+				Esto ya NO debe convertirse
+				en un 500 genérico sin información.
+			*/
 
 			c.JSON(
 				http.StatusInternalServerError,
@@ -1037,11 +1287,20 @@ func ActualizarBlog(
 					"success": false,
 					"message": "No se pudo actualizar el artículo.",
 					"error":   err.Error(),
+					"details": gin.H{
+						"identifier":  identifier,
+						"current_id":  currentID,
+						"current_slug": currentSlug,
+					},
 				},
 			)
 
 			return
 		}
+
+		/* =================================================
+		   RESPUESTA
+		================================================= */
 
 		c.JSON(
 			http.StatusOK,
@@ -1064,8 +1323,27 @@ func EliminarBlog(
 
 	return func(c *gin.Context) {
 
-		id :=
-			c.Param("id")
+		/*
+			Aceptamos ID o SLUG.
+		*/
+
+		identifier :=
+			strings.TrimSpace(
+				c.Param("id"),
+			)
+
+		if identifier == "" {
+
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "Identificador inválido.",
+				},
+			)
+
+			return
+		}
 
 		ctx, cancel :=
 			context.WithTimeout(
@@ -1075,14 +1353,19 @@ func EliminarBlog(
 
 		defer cancel()
 
+		/* =================================================
+		   ELIMINAR POR ID O SLUG
+		================================================= */
+
 		result, err :=
 			db.Exec(
 				ctx,
 				`
 				DELETE FROM blog_posts
-				WHERE id = $1
+				WHERE id::text = $1
+				   OR slug = $1
 				`,
-				id,
+				identifier,
 			)
 
 		if err != nil {
@@ -1148,6 +1431,10 @@ func SubirImagenBlog(
 			return
 		}
 
+		/* =================================================
+		   TAMAÑO
+		================================================= */
+
 		if fileHeader.Size >
 			8*1024*1024 {
 
@@ -1162,6 +1449,10 @@ func SubirImagenBlog(
 			return
 		}
 
+		/* =================================================
+		   TIPO
+		================================================= */
+
 		contentType :=
 			fileHeader.Header.Get(
 				"Content-Type",
@@ -1174,7 +1465,9 @@ func SubirImagenBlog(
 				"image/webp": true,
 			}
 
-		if !allowedTypes[contentType] {
+		if !allowedTypes[
+			contentType,
+		] {
 
 			c.JSON(
 				http.StatusBadRequest,
@@ -1187,6 +1480,10 @@ func SubirImagenBlog(
 			return
 		}
 
+		/* =================================================
+		   ABRIR
+		================================================= */
+
 		file, err :=
 			fileHeader.Open()
 
@@ -1197,6 +1494,7 @@ func SubirImagenBlog(
 				gin.H{
 					"success": false,
 					"message": "No se pudo abrir la imagen.",
+					"error":   err.Error(),
 				},
 			)
 
@@ -1205,14 +1503,14 @@ func SubirImagenBlog(
 
 		defer file.Close()
 
-		data :=
-			make(
-				[]byte,
-				fileHeader.Size,
-			)
+		/*
+			Usamos io.ReadAll en lugar de
+			file.Read para garantizar que
+			se lea el archivo completo.
+		*/
 
-		_, err =
-			file.Read(data)
+		data, err :=
+			io.ReadAll(file)
 
 		if err != nil {
 
@@ -1221,17 +1519,26 @@ func SubirImagenBlog(
 				gin.H{
 					"success": false,
 					"message": "No se pudo leer la imagen.",
+					"error":   err.Error(),
 				},
 			)
 
 			return
 		}
 
+		/* =================================================
+		   ID
+		================================================= */
+
 		id :=
 			uuid.New()
 
 		filename :=
 			fileHeader.Filename
+
+		/* =================================================
+		   DB
+		================================================= */
 
 		ctx, cancel :=
 			context.WithTimeout(
@@ -1265,7 +1572,7 @@ func SubirImagenBlog(
 				id,
 				filename,
 				contentType,
-				fileHeader.Size,
+				int64(len(data)),
 				data,
 			)
 
@@ -1314,7 +1621,9 @@ func VerImagenBlog(
 	return func(c *gin.Context) {
 
 		id :=
-			c.Param("id")
+			strings.TrimSpace(
+				c.Param("id"),
+			)
 
 		ctx, cancel :=
 			context.WithTimeout(
@@ -1341,14 +1650,15 @@ func VerImagenBlog(
 				`,
 				id,
 			).
-				Scan(
-					&contentType,
-					&data,
-				)
+			Scan(
+				&contentType,
+				&data,
+			)
 
 		if err != nil {
 
-			if err == pgx.ErrNoRows {
+			if err ==
+				pgx.ErrNoRows {
 
 				c.JSON(
 					http.StatusNotFound,
@@ -1366,6 +1676,7 @@ func VerImagenBlog(
 				gin.H{
 					"success": false,
 					"message": "No se pudo obtener la imagen.",
+					"error":   err.Error(),
 				},
 			)
 
