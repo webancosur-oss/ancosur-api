@@ -44,6 +44,7 @@ func main() {
 	routes.RutasFormularios(api, db)
 	routes.RutasPostulaciones(api, db)
 	routes.RutasConvocatorias(api, db)
+	routes.RutasBlog(api,db,)
 	// routes.RutasProyectos(api, db)
 	// routes.RutasCampanias(api, db)
 	// routes.RutasInversiones(api, db)
