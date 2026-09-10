@@ -12,66 +12,199 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+
+	// =========================================================
+	// CARGAR VARIABLES DE ENTORNO
+	// =========================================================
+
+	if err := godotenv.Load(); err != nil {
+		log.Println(
+			"Advertencia: no se pudo cargar el archivo .env. " +
+				"Se utilizarán las variables de entorno disponibles.",
+		)
+	}
+
+	// =========================================================
+	// CONFIGURACIÓN
+	// =========================================================
+
 	appConfig := config.Load()
 
-	db, err := connectDatabase(appConfig.DatabaseURL)
+	// =========================================================
+	// BASE DE DATOS
+	// =========================================================
+
+	db, err := connectDatabase(
+		appConfig.DatabaseURL,
+	)
+
 	if err != nil {
-		log.Fatal("Error conectando a PostgreSQL: ", err)
+		log.Fatal(
+			"Error conectando a PostgreSQL: ",
+			err,
+		)
 	}
 
 	defer db.Close()
 
+	// =========================================================
+	// GIN
+	// =========================================================
+
 	router := gin.Default()
 
-	enableCORS(router, appConfig.FrontendURLs)
+	// =========================================================
+	// CORS
+	// =========================================================
 
-	router.GET("/", HomeHandler)
-	router.GET("/health", HealthHandler(db))
+	enableCORS(
+		router,
+		appConfig.FrontendURLs,
+	)
 
-	router.Static("/public", "./public")
+	// =========================================================
+	// RUTAS GENERALES
+	// =========================================================
+
+	router.GET(
+		"/",
+		HomeHandler,
+	)
+
+	router.GET(
+		"/health",
+		HealthHandler(db),
+	)
+
+	router.Static(
+		"/public",
+		"./public",
+	)
+
+	// =========================================================
+	// API
+	// =========================================================
 
 	api := router.Group("/api")
 
-	// Rutas públicas y protegidas manejadas dentro de cada archivo
-	routes.RutasAuth(api, db)
-	routes.RutasLeads(api, db)
-	routes.RutasUsers(api, db)
-	routes.RutasAsesores(api, db)
-	routes.RutasEstadoLeads(api, db)
-	routes.RutasFormularios(api, db)
-	routes.RutasPostulaciones(api, db)
-	routes.RutasConvocatorias(api, db)
-	routes.RutasBlog(api,db,)
+	// =========================================================
+	// RUTAS EXISTENTES
+	// =========================================================
+
+	routes.RutasAuth(
+		api,
+		db,
+	)
+
+	routes.RutasLeads(
+		api,
+		db,
+	)
+
+	routes.RutasUsers(
+		api,
+		db,
+	)
+
+	routes.RutasAsesores(
+		api,
+		db,
+	)
+
+	routes.RutasEstadoLeads(
+		api,
+		db,
+	)
+
+	routes.RutasFormularios(
+		api,
+		db,
+	)
+
+	routes.RutasPostulaciones(
+		api,
+		db,
+	)
+
+	routes.RutasConvocatorias(
+		api,
+		db,
+	)
+
+	routes.RutasBlog(
+		api,
+		db,
+	)
+
+	routes.RutasReclamos(
+		api,
+		db,
+	)
+
+	// =========================================================
+	// RUTAS FUTURAS
+	// =========================================================
+
 	// routes.RutasProyectos(api, db)
 	// routes.RutasCampanias(api, db)
 	// routes.RutasInversiones(api, db)
 	// routes.RutasTerrenos(api, db)
 	// routes.RutasClientes(api, db)
 
-	fmt.Println("Server on port " + appConfig.Port)
+	// =========================================================
+	// SERVIDOR
+	// =========================================================
 
-	if err := router.Run(":" + appConfig.Port); err != nil {
-		log.Fatal("Error iniciando servidor: ", err)
+	fmt.Println(
+		"Server on port " + appConfig.Port,
+	)
+
+	if err := router.Run(
+		":" + appConfig.Port,
+	); err != nil {
+
+		log.Fatal(
+			"Error iniciando servidor: ",
+			err,
+		)
 	}
 }
 
-func connectDatabase(databaseURL string) (*pgxpool.Pool, error) {
+// =============================================================
+// DATABASE
+// =============================================================
+
+func connectDatabase(
+	databaseURL string,
+) (*pgxpool.Pool, error) {
+
 	if databaseURL == "" {
-		return nil, fmt.Errorf("DATABASE_URL no está configurada ni se pudo generar con DB_HOST, DB_PORT, DB_NAME, DB_USER y DB_PASSWORD")
+		return nil, fmt.Errorf(
+			"DATABASE_URL no está configurada ni se pudo generar con DB_HOST, DB_PORT, DB_NAME, DB_USER y DB_PASSWORD",
+		)
 	}
 
-	configDB, err := pgxpool.ParseConfig(databaseURL)
+	configDB, err := pgxpool.ParseConfig(
+		databaseURL,
+	)
+
 	if err != nil {
 		return nil, err
 	}
 
 	configDB.MaxConns = 10
+
 	configDB.MinConns = 1
-	configDB.MaxConnLifetime = time.Hour
-	configDB.MaxConnIdleTime = time.Minute * 30
+
+	configDB.MaxConnLifetime =
+		time.Hour
+
+	configDB.MaxConnIdleTime =
+		30 * time.Minute
 
 	db, err := pgxpool.NewWithConfig(
 		context.Background(),
@@ -90,139 +223,185 @@ func connectDatabase(databaseURL string) (*pgxpool.Pool, error) {
 	defer cancel()
 
 	if err := db.Ping(ctx); err != nil {
+
 		db.Close()
+
 		return nil, err
 	}
 
 	return db, nil
 }
 
-func HomeHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"api":     "API ANCOSUR Dashboard",
-		"version": "1.0.0",
-		"message": "Servicio disponible.",
-	})
+// =============================================================
+// HOME
+// =============================================================
+
+func HomeHandler(
+	c *gin.Context,
+) {
+
+	c.JSON(
+		http.StatusOK,
+		gin.H{
+			"success": true,
+			"api":     "API ANCOSUR Dashboard",
+			"version": "1.0.0",
+			"message": "Servicio disponible.",
+		},
+	)
 }
 
-func HealthHandler(db *pgxpool.Pool) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(
-			c.Request.Context(),
-			3*time.Second,
-		)
+// =============================================================
+// HEALTH
+// =============================================================
+
+func HealthHandler(
+	db *pgxpool.Pool,
+) gin.HandlerFunc {
+
+	return func(
+		c *gin.Context,
+	) {
+
+		ctx, cancel :=
+			context.WithTimeout(
+				c.Request.Context(),
+				3*time.Second,
+			)
 
 		defer cancel()
 
-		if err := db.Ping(ctx); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"success": false,
-				"api":     "API ANCOSUR Dashboard",
-				"db":      "error",
-				"message": "No hay conexión con la base de datos.",
-				"error":   err.Error(),
-			})
+		if err := db.Ping(
+			ctx,
+		); err != nil {
 
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"api":     "API ANCOSUR Dashboard",
-			"db":      "ok",
-			"message": "API y base de datos disponibles.",
-		})
-	}
-}
-
-func enableCORS(
-	router *gin.Engine,
-	frontendURLs []string,
-) {
-	router.Use(func(c *gin.Context) {
-		origin :=
-			c.Request.Header.Get("Origin")
-
-		allowedOrigins :=
-			map[string]bool{
-				"http://localhost:3000": true,
-				"http://localhost:3001": true,
-				"http://localhost:3002": true,
-				"http://localhost:3003": true,
-			}
-
-		for _, allowed := range frontendURLs {
-
-			allowed =
-				strings.TrimSpace(
-					allowed,
-				)
-
-			if allowed != "" {
-				allowedOrigins[allowed] =
-					true
-			}
-		}
-
-		/*
-			Las peticiones de Postman,
-			backend o server-to-server
-			pueden no tener Origin.
-		*/
-		if origin == "" {
-			c.Next()
-			return
-		}
-
-		if !allowedOrigins[origin] {
-			c.AbortWithStatusJSON(
-				http.StatusForbidden,
+			c.JSON(
+				http.StatusServiceUnavailable,
 				gin.H{
 					"success": false,
-					"message": "Origen no permitido por CORS.",
-					"origin":  origin,
+					"api":     "API ANCOSUR Dashboard",
+					"db":      "error",
+					"message": "No hay conexión con la base de datos.",
+					"error":   err.Error(),
 				},
 			)
 
 			return
 		}
 
-		c.Writer.Header().Set(
-			"Access-Control-Allow-Origin",
-			origin,
+		c.JSON(
+			http.StatusOK,
+			gin.H{
+				"success": true,
+				"api":     "API ANCOSUR Dashboard",
+				"db":      "ok",
+				"message": "API y base de datos disponibles.",
+			},
 		)
+	}
+}
 
-		c.Writer.Header().Set(
-			"Vary",
-			"Origin",
-		)
+// =============================================================
+// CORS
+// =============================================================
 
-		c.Writer.Header().Set(
-			"Access-Control-Allow-Credentials",
-			"true",
-		)
+func enableCORS(
+	router *gin.Engine,
+	frontendURLs []string,
+) {
 
-		c.Writer.Header().Set(
-			"Access-Control-Allow-Methods",
-			"GET, POST, PUT, PATCH, DELETE, OPTIONS",
-		)
+	router.Use(
+		func(c *gin.Context) {
 
-		c.Writer.Header().Set(
-			"Access-Control-Allow-Headers",
-			"Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Access-Token",
-		)
+			origin :=
+				c.Request.Header.Get(
+					"Origin",
+				)
 
-		if c.Request.Method ==
-			http.MethodOptions {
+			allowedOrigins :=
+				map[string]bool{
+					"http://localhost:3000": true,
+					"http://localhost:3001": true,
+					"http://localhost:3002": true,
+					"http://localhost:3003": true,
+				}
 
-			c.AbortWithStatus(
-				http.StatusNoContent,
+			for _, allowed := range frontendURLs {
+
+				allowed =
+					strings.TrimSpace(
+						allowed,
+					)
+
+				if allowed != "" {
+
+					allowedOrigins[allowed] = true
+				}
+			}
+
+			/*
+				Las peticiones de Postman,
+				backend o server-to-server
+				pueden no tener Origin.
+			*/
+
+			if origin == "" {
+
+				c.Next()
+
+				return
+			}
+
+			if !allowedOrigins[origin] {
+
+				c.AbortWithStatusJSON(
+					http.StatusForbidden,
+					gin.H{
+						"success": false,
+						"message": "Origen no permitido por CORS.",
+						"origin":  origin,
+					},
+				)
+
+				return
+			}
+
+			c.Writer.Header().Set(
+				"Access-Control-Allow-Origin",
+				origin,
 			)
 
-			return
-		}
+			c.Writer.Header().Set(
+				"Vary",
+				"Origin",
+			)
 
-		c.Next()
-	})
+			c.Writer.Header().Set(
+				"Access-Control-Allow-Credentials",
+				"true",
+			)
+
+			c.Writer.Header().Set(
+				"Access-Control-Allow-Methods",
+				"GET, POST, PUT, PATCH, DELETE, OPTIONS",
+			)
+
+			c.Writer.Header().Set(
+				"Access-Control-Allow-Headers",
+				"Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Access-Token",
+			)
+
+			if c.Request.Method ==
+				http.MethodOptions {
+
+				c.AbortWithStatus(
+					http.StatusNoContent,
+				)
+
+				return
+			}
+
+			c.Next()
+		},
+	)
 }
