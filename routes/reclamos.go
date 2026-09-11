@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -1397,10 +1398,11 @@ func buildReclamoPDF(data reclamoPDFData, original string) ([]byte, error) {
 
 	blocks := []reclamoPDFBlock{
 		{kind: "header", key: "LIBRO DE RECLAMACIONES", value: "HOJA DE RECLAMACIÓN / CONSTANCIA DIGITAL"},
-		{kind: "meta", key: "N.° DE HOJA", value: data.Codigo},
+		{kind: "meta", key: "N.° DE HOJA", value: fmt.Sprintf("%08d", data.NumeroCorrelativo)},
 		{kind: "meta", key: "FECHA", value: data.Fecha.Format("02/01/2006")},
 		{kind: "meta", key: "HORA", value: data.Fecha.Format("15:04")},
 		{kind: "meta", key: "TIPO", value: tipo},
+		{kind: "meta", key: "CÓDIGO DE SEGUIMIENTO", value: data.Codigo},
 		{kind: "section", key: "PROVEEDOR", value: ""},
 		{kind: "kv", key: "Razón social", value: "ANCOSUR S.A.C."},
 		{kind: "kv", key: "RUC", value: ancosurRUC},
@@ -1702,9 +1704,9 @@ func buildCorporateReclamoPDF(blocks []reclamoPDFBlock, codigo string) ([]byte, 
 				currentY -= 21
 
 			case "kv":
-				writePDFKeyValue(&content, item.text, marginLeft+4, currentY,
+				usedLines := writePDFKeyValue(&content, item.text, marginLeft+4, currentY,
 					grayR, grayG, grayB, blackR, blackG, blackB)
-				currentY -= 15
+				currentY -= 15 * float64(usedLines)
 
 			case "label":
 				writePDFText(&content, "F2", 8, marginLeft+4, currentY,
@@ -1742,7 +1744,7 @@ func buildCorporateReclamoPDF(blocks []reclamoPDFBlock, codigo string) ([]byte, 
 			"ANCOSUR S.A.C. | RUC "+ancosurRUC+" | "+ancosurTelefono,
 			grayR, grayG, grayB)
 		writePDFText(&content, "F1", 6.5, pageW-marginRight-62, 25,
-			fmt.Sprintf("Pagina %d de %d", pageIndex+1, len(pages)),
+			fmt.Sprintf("Página %d de %d", pageIndex+1, len(pages)),
 			grayR, grayG, grayB)
 
 		contentBytes := []byte(content.String())
@@ -1818,35 +1820,41 @@ func writePDFKeyValue(
 	valueR float64,
 	valueG float64,
 	valueB float64,
-) {
+) int {
 	parts := strings.SplitN(line, ":", 2)
 	if len(parts) != 2 {
 		writePDFText(b, "F1", 8.5, x, y, line, valueR, valueG, valueB)
-		return
+		return 1
 	}
 
 	key := strings.TrimSpace(parts[0]) + ":"
 	value := strings.TrimSpace(parts[1])
+	if value == "" {
+		value = "No consignado"
+	}
 
 	writePDFText(b, "F2", 8, x, y, key, keyR, keyG, keyB)
 
-	// Ancho aproximado para Helvetica.
+	// Ancho aproximado para Helvetica. El valor se parte aquí y el
+	// llamador reserva exactamente el número de líneas utilizadas, evitando
+	// que valores largos (domicilios, descripciones, etc.) se superpongan.
 	keyWidth := float64(len([]rune(key)))*4.35 + 7
 	maxWidth := 595.0 - 42.0 - keyWidth - x
-	partsValue := wrapPDFLine(value, int(maxWidth/4.5))
-	if len(partsValue) == 0 {
-		return
+	maxChars := int(maxWidth / 4.5)
+	if maxChars < 18 {
+		maxChars = 18
+	}
+	valueLines := wrapPDFLine(value, maxChars)
+	if len(valueLines) == 0 {
+		valueLines = []string{"No consignado"}
 	}
 
-	writePDFText(b, "F1", 8.5, x+keyWidth, y, partsValue[0],
-		valueR, valueG, valueB)
-
-	// Las líneas adicionales se colocan debajo. El generador principal
-	// reserva una línea por bloque; para textos extensos usamos una sangría.
-	for i := 1; i < len(partsValue); i++ {
+	for i, valueLine := range valueLines {
 		writePDFText(b, "F1", 8.5, x+keyWidth, y-float64(i)*11,
-			partsValue[i], valueR, valueG, valueB)
+			valueLine, valueR, valueG, valueB)
 	}
+
+	return len(valueLines)
 }
 
 func escapePDFText(s string) string {
@@ -2214,12 +2222,211 @@ func wrapPDFLine(s string, max int) []string {
 }
 
 func normalizarPDF(s string) string {
-	r := strings.NewReplacer(
-		"á", "a", "é", "e", "í", "i", "ó", "o", "ú", "u", "ü", "u", "ñ", "n",
-		"Á", "A", "É", "E", "Í", "I", "Ó", "O", "Ú", "U", "Ü", "U", "Ñ", "N",
-		"“", "\"", "”", "\"", "’", "'", "–", "-", "—", "-",
-	)
-	return r.Replace(s)
+	// 1) Corrige mojibake frecuente producido cuando UTF-8 fue interpretado
+	//    como Latin-1/Windows-1252. Ej.: "N.Â°" -> "N.°" y "InformaciÃ³n" -> "Información".
+	s = repararMojibake(s)
+
+	// 2) Convierte Unicode a bytes Windows-1252/WinAnsi. Helvetica Type1
+	//    estándar no entiende UTF-8 directamente; escribir los bytes UTF-8
+	//    crudos es precisamente lo que provoca textos como "Â°" en algunos visores.
+	return unicodeAWinAnsi(s)
+}
+
+func repararMojibake(s string) string {
+	if !strings.ContainsAny(s, "ÃÂâð") {
+		return s
+	}
+
+	// Revierte texto UTF-8 que fue decodificado erróneamente como
+	// ISO-8859-1/Windows-1252. Esto cubre casos como:
+	//   N.Â°        -> N.°
+	//   InformaciÃ³n -> Información
+	//   â€“         -> –
+	//   â€”         -> —
+	buf := make([]byte, 0, len(s))
+	for _, r := range s {
+		if v, ok := runeAWin1252Byte(r); ok {
+			buf = append(buf, v)
+			continue
+		}
+		return s
+	}
+
+	candidate := string(buf)
+	if !utf8.ValidString(candidate) {
+		return s
+	}
+
+	badBefore := contarMojibake(s)
+	badAfter := contarMojibake(candidate)
+	if badAfter < badBefore {
+		return candidate
+	}
+	return s
+}
+
+func contarMojibake(s string) int {
+	return strings.Count(s, "Ã") +
+		strings.Count(s, "Â") +
+		strings.Count(s, "â") +
+		strings.Count(s, "ð") +
+		strings.Count(s, "�")
+}
+
+func runeAWin1252Byte(r rune) (byte, bool) {
+	if r >= 0 && r <= 0x7F {
+		return byte(r), true
+	}
+	if r >= 0xA0 && r <= 0xFF {
+		return byte(r), true
+	}
+
+	switch r {
+	case 0x20AC:
+		return 0x80, true
+	case 0x201A:
+		return 0x82, true
+	case 0x192:
+		return 0x83, true
+	case 0x201E:
+		return 0x84, true
+	case 0x2026:
+		return 0x85, true
+	case 0x2020:
+		return 0x86, true
+	case 0x2021:
+		return 0x87, true
+	case 0x2C6:
+		return 0x88, true
+	case 0x2030:
+		return 0x89, true
+	case 0x160:
+		return 0x8A, true
+	case 0x2039:
+		return 0x8B, true
+	case 0x152:
+		return 0x8C, true
+	case 0x17D:
+		return 0x8E, true
+	case 0x2018:
+		return 0x91, true
+	case 0x2019:
+		return 0x92, true
+	case 0x201C:
+		return 0x93, true
+	case 0x201D:
+		return 0x94, true
+	case 0x2022:
+		return 0x95, true
+	case 0x2013:
+		return 0x96, true
+	case 0x2014:
+		return 0x97, true
+	case 0x2DC:
+		return 0x98, true
+	case 0x2122:
+		return 0x99, true
+	case 0x161:
+		return 0x9A, true
+	case 0x203A:
+		return 0x9B, true
+	case 0x153:
+		return 0x9C, true
+	case 0x17E:
+		return 0x9E, true
+	case 0x178:
+		return 0x9F, true
+	default:
+		return 0, false
+	}
+}
+
+func unicodeAWinAnsi(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+
+	for _, r := range s {
+		switch {
+		case r >= 0x20 && r <= 0x7E:
+			b.WriteByte(byte(r))
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteByte(' ')
+		case r >= 0xA0 && r <= 0xFF:
+			b.WriteByte(byte(r))
+		default:
+			// Caracteres Unicode habituales que no ocupan las posiciones
+			// correspondientes en WinAnsi.
+			mapped := byte(0)
+			switch r {
+			case 0x20AC: // €
+				mapped = 0x80
+			case 0x201A: // ‚
+				mapped = 0x82
+			case 0x192: // ƒ
+				mapped = 0x83
+			case 0x201E: // „
+				mapped = 0x84
+			case 0x2026: // …
+				mapped = 0x85
+			case 0x2020: // †
+				mapped = 0x86
+			case 0x2021: // ‡
+				mapped = 0x87
+			case 0x2C6: // ˆ
+				mapped = 0x88
+			case 0x2030: // ‰
+				mapped = 0x89
+			case 0x160: // Š
+				mapped = 0x8A
+			case 0x2039: // ‹
+				mapped = 0x8B
+			case 0x152: // Œ
+				mapped = 0x8C
+			case 0x17D: // Ž
+				mapped = 0x8E
+			case 0x2018: // ‘
+				mapped = 0x91
+			case 0x2019: // ’
+				mapped = 0x92
+			case 0x201C: // “
+				mapped = 0x93
+			case 0x201D: // ”
+				mapped = 0x94
+			case 0x2022: // •
+				mapped = 0x95
+			case 0x2013: // –
+				mapped = 0x96
+			case 0x2014: // —
+				mapped = 0x97
+			case 0x2DC: // ˜
+				mapped = 0x98
+			case 0x2122: // ™
+				mapped = 0x99
+			case 0x161: // š
+				mapped = 0x9A
+			case 0x203A: // ›
+				mapped = 0x9B
+			case 0x153: // œ
+				mapped = 0x9C
+			case 0x17E: // ž
+				mapped = 0x9E
+			case 0x178: // Ÿ
+				mapped = 0x9F
+			case 0x2212: // −
+				mapped = '-'
+			case 0x00B7: // ·
+				mapped = 0xB7
+			case 0x00B0: // °
+				mapped = 0xB0
+			default:
+				// Para cualquier carácter fuera de WinAnsi usamos una marca
+				// legible en vez de emitir UTF-8 inválido para una fuente Type1.
+				mapped = '?'
+			}
+			b.WriteByte(mapped)
+		}
+	}
+	return b.String()
 }
 
 // Hash sencillo para auditoría visual del PDF. No pretende ser un hash criptográfico.
