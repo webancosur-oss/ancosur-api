@@ -1136,96 +1136,98 @@ func generarPDFReclamo(db *pgxpool.Pool) gin.HandlerFunc {
 		defer cancel()
 
 		var (
-			codigo       string
-			fecha        time.Time
-			tipo         string
-			nombres      string
-			apellidos    string
-			tipoDoc      string
-			numDoc       string
-			email        string
-			telefono     string
-			domicilio    string
-			departamento string
-			provincia    string
-			distrito     string
-			proyecto     string
-			estadoProj   string
-			edificio     string
-			unidad       string
-			numOperacion string
-			producto     string
-			monto        *float64
-			detalle      string
-			pedido       string
-			estado       string
-			prioridad    string
-			respuesta    string
-			medio        string
-			fechaResp    *time.Time
-			original     []byte
+			datos    reclamoPDFData
+			original string
 		)
 
 		err := db.QueryRow(ctx, `
 			SELECT
-				codigo_registro,
-				created_at,
-				tipo,
-				nombres,
-				apellidos,
-				tipo_documento,
-				numero_documento,
-				email,
-				COALESCE(telefono, ''),
-				COALESCE(domicilio, ''),
-				COALESCE(departamento, ''),
-				COALESCE(provincia, ''),
-				COALESCE(distrito, ''),
-				COALESCE(proyecto, ''),
-				COALESCE(estado_proyecto, ''),
-				COALESCE(edificio, ''),
-				COALESCE(unidad, ''),
-				COALESCE(numero_operacion, ''),
-				COALESCE(producto_servicio, ''),
-				monto_reclamado,
-				COALESCE(detalle, ''),
-				COALESCE(pedido_concreto, ''),
-				estado,
-				prioridad,
-				COALESCE(respuesta, ''),
-				COALESCE(medio_respuesta, ''),
-				fecha_respuesta,
-				COALESCE(datos_originales, '{}'::jsonb)::text
-			FROM libro_reclamaciones
-			WHERE id = $1
+				r.id,
+				r.numero_correlativo,
+				r.codigo_registro,
+				r.created_at,
+				r.tipo,
+				COALESCE(r.establecimiento, ''),
+				COALESCE(r.nombres, ''),
+				COALESCE(r.apellidos, ''),
+				COALESCE(r.tipo_documento, ''),
+				COALESCE(r.numero_documento, ''),
+				COALESCE(r.domicilio, ''),
+				COALESCE(r.telefono, ''),
+				COALESCE(r.email, ''),
+				COALESCE(r.departamento, ''),
+				COALESCE(r.provincia, ''),
+				COALESCE(r.distrito, ''),
+				COALESCE(r.es_menor, false),
+				COALESCE(r.representante_nombres, ''),
+				COALESCE(r.representante_apellidos, ''),
+				COALESCE(r.representante_tipo_documento, ''),
+				COALESCE(r.representante_numero_documento, ''),
+				COALESCE(r.representante_telefono, ''),
+				COALESCE(r.representante_email, ''),
+				COALESCE(r.tipo_contratado, ''),
+				COALESCE(r.proyecto, ''),
+				COALESCE(r.estado_proyecto, ''),
+				COALESCE(r.edificio, ''),
+				COALESCE(r.unidad, ''),
+				COALESCE(r.numero_operacion, ''),
+				COALESCE(r.producto_servicio, ''),
+				r.monto_reclamado,
+				COALESCE(r.detalle, ''),
+				COALESCE(r.pedido_concreto, ''),
+				COALESCE(r.estado, 'pendiente'),
+				COALESCE(r.prioridad, 'normal'),
+				COALESCE(r.responsable_nombre, ''),
+				COALESCE(r.respuesta, ''),
+				COALESCE(r.medio_respuesta, ''),
+				r.fecha_respuesta,
+				COALESCE(r.canal, ''),
+				COALESCE(r.autoriza_notificacion_email, false),
+				COALESCE(r.datos_originales, '{}'::jsonb)::text
+			FROM libro_reclamaciones r
+			WHERE r.id = $1
 		`, id).Scan(
-			&codigo,
-			&fecha,
-			&tipo,
-			&nombres,
-			&apellidos,
-			&tipoDoc,
-			&numDoc,
-			&email,
-			&telefono,
-			&domicilio,
-			&departamento,
-			&provincia,
-			&distrito,
-			&proyecto,
-			&estadoProj,
-			&edificio,
-			&unidad,
-			&numOperacion,
-			&producto,
-			&monto,
-			&detalle,
-			&pedido,
-			&estado,
-			&prioridad,
-			&respuesta,
-			&medio,
-			&fechaResp,
+			&datos.ID,
+			&datos.NumeroCorrelativo,
+			&datos.Codigo,
+			&datos.Fecha,
+			&datos.Tipo,
+			&datos.Establecimiento,
+			&datos.Nombres,
+			&datos.Apellidos,
+			&datos.TipoDocumento,
+			&datos.NumeroDocumento,
+			&datos.Domicilio,
+			&datos.Telefono,
+			&datos.Email,
+			&datos.Departamento,
+			&datos.Provincia,
+			&datos.Distrito,
+			&datos.EsMenor,
+			&datos.RepresentanteNombres,
+			&datos.RepresentanteApellidos,
+			&datos.RepresentanteTipoDocumento,
+			&datos.RepresentanteNumeroDocumento,
+			&datos.RepresentanteTelefono,
+			&datos.RepresentanteEmail,
+			&datos.TipoContratado,
+			&datos.Proyecto,
+			&datos.EstadoProyecto,
+			&datos.Edificio,
+			&datos.Unidad,
+			&datos.NumeroOperacion,
+			&datos.ProductoServicio,
+			&datos.MontoReclamado,
+			&datos.Detalle,
+			&datos.Pedido,
+			&datos.Estado,
+			&datos.Prioridad,
+			&datos.Responsable,
+			&datos.Respuesta,
+			&datos.MedioRespuesta,
+			&datos.FechaRespuesta,
+			&datos.Canal,
+			&datos.AutorizaNotificacionEmail,
 			&original,
 		)
 
@@ -1246,206 +1248,614 @@ func generarPDFReclamo(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// =========================================================
-		// DATOS GENERALES
-		// =========================================================
-
-		nombreCompleto := strings.TrimSpace(
-			strings.Join([]string{nombres, apellidos}, " "),
-		)
-
-		ubicacion := strings.TrimSpace(
-			strings.Join(
-				[]string{
-					departamento,
-					provincia,
-					distrito,
-				},
-				" / ",
-			),
-		)
-
-		// =========================================================
-		// CONTENIDO DEL DOCUMENTO
-		// =========================================================
-
-		lines := []string{
-			"ANCOSUR S.A.C.",
-			"LIBRO DE RECLAMACIONES",
-			"INFORME DE REGISTRO",
-			"",
-			"INFORMACION DEL REGISTRO",
-			"Codigo de registro: " + codigo,
-			"Fecha de registro: " + fecha.Format("02/01/2006 15:04"),
-			"Tipo de registro: " + strings.ToUpper(tipo),
-			"Estado: " + strings.ToUpper(estado),
-			"Prioridad: " + strings.ToUpper(prioridad),
-			"",
-			"1. DATOS DEL CONSUMIDOR",
-			"Nombres y apellidos: " + nombreCompleto,
-			"Documento: " + tipoDoc + " - " + numDoc,
-			"Correo electronico: " + email,
-			"Telefono: " + telefono,
-			"Domicilio: " + domicilio,
-			"Ubicacion: " + ubicacion,
-			"",
-			"2. INFORMACION DEL PROYECTO / SERVICIO",
-			"Proyecto: " + proyecto,
-			"Estado del proyecto: " + estadoProj,
-			"Edificio / Torre / Bloque: " + edificio,
-			"Unidad inmobiliaria: " + unidad,
-			"Numero de operacion: " + numOperacion,
-			"Producto / Servicio: " + producto,
-			"Monto reclamado: " + formatoMonto(monto),
-			"",
-			"3. DETALLE DE LA RECLAMACION",
+		if datos.Codigo == "" {
+			datos.Codigo = fmt.Sprintf("ANC-LR-%d-%06d", datos.Fecha.Year(), datos.NumeroCorrelativo)
 		}
 
-		// Detalle
-		detalleNormalizado := normalizarPDF(detalle)
-		if detalleNormalizado == "" {
-			detalleNormalizado = "No se registro informacion."
-		}
-
-		lines = append(
-			lines,
-			strings.Split(detalleNormalizado, "\n")...,
-		)
-
-		// Pedido
-		lines = append(
-			lines,
-			"",
-			"4. PEDIDO CONCRETO DEL CONSUMIDOR",
-		)
-
-		pedidoNormalizado := normalizarPDF(pedido)
-		if pedidoNormalizado == "" {
-			pedidoNormalizado = "No se registro informacion."
-		}
-
-		lines = append(
-			lines,
-			strings.Split(pedidoNormalizado, "\n")...,
-		)
-
-		// Gestión
-		lines = append(
-			lines,
-			"",
-			"5. GESTION Y ATENCION DEL REGISTRO",
-			"Estado actual: "+estado,
-			"Prioridad: "+prioridad,
-		)
-
-		if respuesta != "" {
-			lines = append(
-				lines,
-				"Medio de respuesta: "+medio,
-			)
-
-			if fechaResp != nil {
-				lines = append(
-					lines,
-					"Fecha de respuesta: "+
-						fechaResp.Format("02/01/2006 15:04"),
-				)
-			}
-
-			lines = append(
-				lines,
-				"",
-				"Respuesta de ANCOSUR:",
-			)
-
-			respuestaNormalizada := normalizarPDF(respuesta)
-
-			lines = append(
-				lines,
-				strings.Split(respuestaNormalizada, "\n")...,
-			)
-		} else {
-			lines = append(
-				lines,
-				"Respuesta: Pendiente de atención.",
-			)
-		}
-
-		// Trazabilidad
-		lines = append(
-			lines,
-			"",
-			"6. CONSTANCIA DEL REGISTRO",
-			"El presente documento ha sido generado a partir de la informacion",
-			"almacenada en el Libro de Reclamaciones de ANCOSUR S.A.C.",
-			"El codigo de registro permite identificar y consultar el caso.",
-		)
-
-		// Huella lógica del registro original
-		if len(original) > 0 {
-			lines = append(
-				lines,
-				"",
-				"Identificador de integridad: "+
-					fmt.Sprintf("%x", simpleHash(original)),
-			)
-		}
-
-		// =========================================================
-		// GENERACION DEL PDF
-		// =========================================================
-
-		pdf, err := buildSimplePDF(lines)
+		pdf, err := buildReclamoPDF(datos, original)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"success": false,
-				"message": "No se pudo construir el PDF.",
+				"message": "No se pudo construir el documento PDF.",
 				"error":   err.Error(),
 			})
 			return
 		}
 
-		// =========================================================
-		// RESPUESTA
-		// =========================================================
+		filename := strings.NewReplacer(
+			`"`, "",
+			"/", "-",
+			"\\", "-",
+		).Replace(datos.Codigo)
 
-		filename := codigo
+		c.Header("Content-Disposition", fmt.Sprintf(`inline; filename="%s.pdf"`, filename))
+		c.Header("Cache-Control", "private, no-store, max-age=0")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Data(http.StatusOK, "application/pdf", pdf)
+	}
+}
 
-		if filename == "" {
-			filename = fmt.Sprintf(
-				"ANCOSUR-Libro-Reclamaciones-%d",
-				id,
-			)
+type reclamoPDFData struct {
+	ID                           int64
+	NumeroCorrelativo            int64
+	Codigo                       string
+	Fecha                        time.Time
+	Tipo                         string
+	Establecimiento              string
+	Nombres                      string
+	Apellidos                    string
+	TipoDocumento                string
+	NumeroDocumento              string
+	Domicilio                    string
+	Telefono                     string
+	Email                        string
+	Departamento                 string
+	Provincia                    string
+	Distrito                     string
+	EsMenor                      bool
+	RepresentanteNombres         string
+	RepresentanteApellidos       string
+	RepresentanteTipoDocumento   string
+	RepresentanteNumeroDocumento string
+	RepresentanteTelefono        string
+	RepresentanteEmail           string
+	TipoContratado               string
+	Proyecto                     string
+	EstadoProyecto               string
+	Edificio                     string
+	Unidad                       string
+	NumeroOperacion              string
+	ProductoServicio             string
+	MontoReclamado               *float64
+	Detalle                      string
+	Pedido                       string
+	Estado                       string
+	Prioridad                    string
+	Responsable                  string
+	Respuesta                    string
+	MedioRespuesta               string
+	FechaRespuesta               *time.Time
+	Canal                        string
+	AutorizaNotificacionEmail    bool
+}
+
+const (
+	ancosurRUC          = "20601146682"
+	ancosurDomicilio    = "Av. San Carlos N.° 1481, Huancayo, Junín, Perú"
+	ancosurTelefono     = "971 069 763"
+	ancosurLegalNotice  = "La formulación del reclamo no impide acudir a otras vías de solución de controversias ni constituye requisito previo para interponer una denuncia ante el INDECOPI."
+	ancosurResponseTerm = "El proveedor debe dar respuesta al reclamo o queja en un plazo máximo de quince (15) días hábiles, improrrogables."
+)
+
+type reclamoPDFBlock struct {
+	kind  string
+	key   string
+	value string
+}
+
+func buildReclamoPDF(data reclamoPDFData, original string) ([]byte, error) {
+
+	value := func(v string) string {
+		v = strings.TrimSpace(normalizarPDF(v))
+		if v == "" {
+			return "No consignado"
 		}
+		return v
+	}
 
-		filename = strings.ReplaceAll(filename, `"`, "")
-		filename = strings.ReplaceAll(filename, "/", "-")
-		filename = strings.ReplaceAll(filename, "\\", "-")
+	fullName := strings.TrimSpace(strings.Join(
+		[]string{data.Nombres, data.Apellidos},
+		" ",
+	))
 
-		c.Header(
-			"Content-Disposition",
-			fmt.Sprintf(
-				`inline; filename="%s.pdf"`,
-				filename,
-			),
+	location := strings.Trim(strings.Join(
+		[]string{
+			strings.TrimSpace(data.Departamento),
+			strings.TrimSpace(data.Provincia),
+			strings.TrimSpace(data.Distrito),
+		},
+		" / ",
+	), " /")
+
+	tipo := strings.ToUpper(value(data.Tipo))
+	if tipo == "RECLAMO" {
+		tipo = "RECLAMO"
+	} else {
+		tipo = "QUEJA"
+	}
+
+	estado := strings.ToUpper(strings.ReplaceAll(value(data.Estado), "_", " "))
+	prioridad := strings.ToUpper(strings.ReplaceAll(value(data.Prioridad), "_", " "))
+
+	providerLocation := value(data.Establecimiento)
+	if providerLocation == "No consignado" {
+		providerLocation = ancosurDomicilio
+	}
+
+	productOrService := value(data.ProductoServicio)
+	if productOrService == "No consignado" {
+		productOrService = value(data.TipoContratado)
+	}
+
+	detail := value(data.Detalle)
+	pedido := value(data.Pedido)
+
+	responseText := value(data.Respuesta)
+	if strings.TrimSpace(data.Respuesta) == "" {
+		responseText = "Pendiente de atención."
+	}
+
+	responseDate := "Pendiente"
+	if data.FechaRespuesta != nil {
+		responseDate = data.FechaRespuesta.Format("02/01/2006 15:04")
+	}
+
+	representative := strings.TrimSpace(strings.Join(
+		[]string{data.RepresentanteNombres, data.RepresentanteApellidos},
+		" ",
+	))
+
+	blocks := []reclamoPDFBlock{
+		{kind: "header", key: "LIBRO DE RECLAMACIONES", value: "HOJA DE RECLAMACIÓN / CONSTANCIA DIGITAL"},
+		{kind: "meta", key: "N.° DE HOJA", value: data.Codigo},
+		{kind: "meta", key: "FECHA", value: data.Fecha.Format("02/01/2006")},
+		{kind: "meta", key: "HORA", value: data.Fecha.Format("15:04")},
+		{kind: "meta", key: "TIPO", value: tipo},
+		{kind: "section", key: "PROVEEDOR", value: ""},
+		{kind: "kv", key: "Razón social", value: "ANCOSUR S.A.C."},
+		{kind: "kv", key: "RUC", value: ancosurRUC},
+		{kind: "kv", key: "Domicilio", value: ancosurDomicilio},
+		{kind: "kv", key: "Establecimiento / código", value: providerLocation},
+		{kind: "section", key: "1. IDENTIFICACIÓN DEL CONSUMIDOR RECLAMANTE", value: ""},
+		{kind: "kv", key: "Nombres y apellidos", value: fullName},
+		{kind: "kv", key: "DNI / CE", value: strings.TrimSpace(data.TipoDocumento + " - " + data.NumeroDocumento)},
+		{kind: "kv", key: "Teléfono / celular", value: value(data.Telefono)},
+		{kind: "kv", key: "Correo electrónico", value: value(data.Email)},
+		{kind: "kv", key: "Domicilio", value: value(data.Domicilio)},
+		{kind: "kv", key: "Ubicación", value: location},
+	}
+
+	if data.EsMenor {
+		blocks = append(blocks,
+			reclamoPDFBlock{kind: "kv", key: "Padre / madre / representante", value: value(representative)},
+			reclamoPDFBlock{kind: "kv", key: "Documento del representante", value: strings.TrimSpace(data.RepresentanteTipoDocumento + " - " + data.RepresentanteNumeroDocumento)},
 		)
+		if strings.TrimSpace(data.RepresentanteTelefono) != "" {
+			blocks = append(blocks, reclamoPDFBlock{kind: "kv", key: "Teléfono del representante", value: data.RepresentanteTelefono})
+		}
+		if strings.TrimSpace(data.RepresentanteEmail) != "" {
+			blocks = append(blocks, reclamoPDFBlock{kind: "kv", key: "Correo del representante", value: data.RepresentanteEmail})
+		}
+	}
 
-		c.Header(
-			"Cache-Control",
-			"private, no-store, max-age=0",
-		)
+	blocks = append(blocks,
+		reclamoPDFBlock{kind: "section", key: "2. IDENTIFICACIÓN DEL BIEN CONTRATADO", value: ""},
+		reclamoPDFBlock{kind: "kv", key: "Producto / servicio", value: productOrService},
+		reclamoPDFBlock{kind: "kv", key: "Proyecto relacionado", value: value(data.Proyecto)},
+		reclamoPDFBlock{kind: "kv", key: "Tipo de proyecto", value: value(data.TipoContratado)},
+		reclamoPDFBlock{kind: "kv", key: "Etapa / estado", value: value(data.EstadoProyecto)},
+		reclamoPDFBlock{kind: "kv", key: "Edificio / torre / bloque", value: value(data.Edificio)},
+		reclamoPDFBlock{kind: "kv", key: "Departamento / lote / unidad", value: value(data.Unidad)},
+		reclamoPDFBlock{kind: "kv", key: "N.° de operación", value: value(data.NumeroOperacion)},
+		reclamoPDFBlock{kind: "kv", key: "Monto reclamado", value: formatoMonto(data.MontoReclamado)},
+		reclamoPDFBlock{kind: "section", key: "3. DETALLE DE LA RECLAMACIÓN Y PEDIDO DEL CONSUMIDOR", value: ""},
+		reclamoPDFBlock{kind: "label", key: "DETALLE", value: detail},
+		reclamoPDFBlock{kind: "label", key: "PEDIDO", value: pedido},
+		reclamoPDFBlock{kind: "section", key: "4. OBSERVACIONES Y ACCIONES ADOPTADAS POR EL PROVEEDOR", value: ""},
+		reclamoPDFBlock{kind: "kv", key: "Estado de atención", value: estado},
+		reclamoPDFBlock{kind: "kv", key: "Prioridad interna", value: prioridad},
+		reclamoPDFBlock{kind: "kv", key: "Responsable de atención", value: value(data.Responsable)},
+		reclamoPDFBlock{kind: "kv", key: "Medio de respuesta", value: value(data.MedioRespuesta)},
+		reclamoPDFBlock{kind: "kv", key: "Fecha de comunicación de respuesta", value: responseDate},
+		reclamoPDFBlock{kind: "label", key: "RESPUESTA / ACCIONES ADOPTADAS", value: responseText},
+		reclamoPDFBlock{kind: "section", key: "CONSTANCIA DE PRESENTACIÓN VIRTUAL", value: ""},
+		reclamoPDFBlock{kind: "paragraph", key: "", value: "Registro presentado mediante la plataforma virtual del Libro de Reclamaciones. La conformidad electrónica registrada en la plataforma constituye el mecanismo implementado para acreditar la presentación y conformidad del consumidor."},
+		reclamoPDFBlock{kind: "kv", key: "Canal de registro", value: value(data.Canal)},
+		reclamoPDFBlock{kind: "kv", key: "Código de seguimiento", value: data.Codigo},
+		reclamoPDFBlock{kind: "legal", key: "", value: ancosurResponseTerm},
+		reclamoPDFBlock{kind: "legal", key: "", value: ancosurLegalNotice},
+	)
 
-		c.Header(
-			"X-Content-Type-Options",
-			"nosniff",
-		)
-
-		c.Data(
-			http.StatusOK,
-			"application/pdf",
-			pdf,
+	if len(original) > 0 {
+		blocks = append(blocks,
+			reclamoPDFBlock{
+				kind:  "audit",
+				key:   "Identificador interno de integridad",
+				value: fmt.Sprintf("%x", simpleHash([]byte(original))),
+			},
 		)
 	}
+
+	return buildCorporateReclamoPDF(blocks, data.Codigo)
+}
+
+func buildCorporateReclamoPDF(blocks []reclamoPDFBlock, codigo string) ([]byte, error) {
+	// A4 en puntos PDF.
+	const (
+		pageW        = 595.0
+		pageH        = 842.0
+		marginLeft   = 42.0
+		marginRight  = 42.0
+		marginTop    = 112.0
+		marginBottom = 48.0
+
+		greenR = 0.0
+		greenG = 0.654902
+		greenB = 0.309804
+
+		blackR = 0.055
+		blackG = 0.055
+		blackB = 0.055
+
+		grayR = 0.38
+		grayG = 0.38
+		grayB = 0.38
+
+		lightR = 0.965
+		lightG = 0.972
+		lightB = 0.968
+
+		borderR = 0.86
+		borderG = 0.88
+		borderB = 0.87
+	)
+
+	type line struct {
+		text  string
+		style string
+	}
+
+	parsed := make([]line, 0, len(blocks)*3)
+
+	appendWrapped := func(text, style string, max int) {
+		text = normalizarPDF(strings.TrimSpace(text))
+		if text == "" {
+			return
+		}
+		for _, part := range wrapPDFLine(text, max) {
+			parsed = append(parsed, line{text: part, style: style})
+		}
+	}
+
+	for _, block := range blocks {
+		switch block.kind {
+		case "header":
+			appendWrapped(block.key, "title", 56)
+			appendWrapped(block.value, "subtitle", 78)
+		case "section":
+			parsed = append(parsed, line{text: block.key, style: "section"})
+		case "meta":
+			parsed = append(parsed, line{text: block.key + ": " + block.value, style: "meta"})
+		case "kv":
+			appendWrapped(block.key+": "+block.value, "kv", 84)
+		case "label":
+			parsed = append(parsed, line{text: block.key, style: "label"})
+			appendWrapped(block.value, "body", 88)
+			parsed = append(parsed, line{text: "", style: "space"})
+		case "paragraph":
+			appendWrapped(block.value, "body", 88)
+			parsed = append(parsed, line{text: "", style: "space"})
+		case "legal":
+			appendWrapped(block.value, "legal", 88)
+			parsed = append(parsed, line{text: "", style: "space"})
+		case "audit":
+			appendWrapped(block.key+": "+block.value, "audit", 88)
+		}
+	}
+
+	type page struct {
+		lines []line
+	}
+	pages := make([]page, 0, 4)
+	current := page{lines: make([]line, 0, 70)}
+	y := pageH - marginTop
+
+	lineHeight := func(style string) float64 {
+		switch style {
+		case "title":
+			return 25
+		case "subtitle":
+			return 16
+		case "section":
+			return 25
+		case "meta":
+			return 18
+		case "kv":
+			return 15
+		case "label":
+			return 16
+		case "legal":
+			return 11
+		case "audit":
+			return 10
+		case "space":
+			return 7
+		default:
+			return 14
+		}
+	}
+
+	flush := func() {
+		if len(current.lines) > 0 {
+			pages = append(pages, current)
+			current = page{lines: make([]line, 0, 70)}
+		}
+		y = pageH - marginTop
+	}
+
+	for _, item := range parsed {
+		h := lineHeight(item.style)
+		if y-h < marginBottom {
+			flush()
+		}
+		current.lines = append(current.lines, item)
+		y -= h
+	}
+	flush()
+
+	if len(pages) == 0 {
+		pages = append(pages, page{lines: []line{{text: "Sin información", style: "body"}}})
+	}
+
+	var pdf strings.Builder
+	pdf.WriteString("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n")
+
+	objects := make([]string, 0, 8+len(pages)*2)
+	catalogID := 1
+	pagesID := 2
+	fontRegularID := 3
+	fontBoldID := 4
+	nextID := 5
+
+	pageIDs := make([]int, len(pages))
+	contentIDs := make([]int, len(pages))
+	for i := range pages {
+		pageIDs[i] = nextID
+		nextID++
+		contentIDs[i] = nextID
+		nextID++
+	}
+
+	objects = append(objects,
+		fmt.Sprintf("<< /Type /Catalog /Pages %d 0 R >>", pagesID),
+	)
+	kids := make([]string, 0, len(pageIDs))
+	for _, id := range pageIDs {
+		kids = append(kids, fmt.Sprintf("%d 0 R", id))
+	}
+	objects = append(objects,
+		fmt.Sprintf("<< /Type /Pages /Count %d /Kids [%s] >>", len(pageIDs), strings.Join(kids, " ")),
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+	)
+
+	for pageIndex, pg := range pages {
+		var content strings.Builder
+
+		// Franja superior.
+		content.WriteString("q\n")
+		fmt.Fprintf(&content, "%.6f %.6f %.6f rg\n", greenR, greenG, greenB)
+		fmt.Fprintf(&content, "0 %.2f %.2f 78 re f\n", pageH-78, pageW)
+		content.WriteString("Q\n")
+
+		// Marca corporativa.
+		writePDFText(&content, "F2", 17, marginLeft, pageH-31,
+			"ANCOSUR", 1, 1, 1)
+		writePDFText(&content, "F1", 7, marginLeft+1, pageH-44,
+			"INMOBILIARIA", 1, 1, 1)
+		writePDFText(&content, "F2", 7, pageW-marginRight-108, pageH-31,
+			"DOCUMENTO DE GESTION", 1, 1, 1)
+
+		// Código de seguimiento en la cabecera.
+		writePDFText(&content, "F1", 7, pageW-marginRight-108, pageH-47,
+			normalizarPDF(codigo), 1, 1, 1)
+
+		// Marco lateral sutil.
+		content.WriteString("q\n")
+		fmt.Fprintf(&content, "%.6f %.6f %.6f RG\n", borderR, borderG, borderB)
+		fmt.Fprintf(&content, "%.2f w\n", 0.6)
+		fmt.Fprintf(&content, "%.2f %.2f %.2f %.2f re S\n",
+			marginLeft-12, 48.0, pageW-marginLeft-marginRight+24, pageH-108)
+		content.WriteString("Q\n")
+
+		currentY := pageH - 100
+
+		for _, item := range pg.lines {
+			switch item.style {
+			case "title":
+				writePDFText(&content, "F2", 18, marginLeft, currentY,
+					item.text, blackR, blackG, blackB)
+				currentY -= 24
+
+			case "subtitle":
+				writePDFText(&content, "F1", 8.5, marginLeft, currentY,
+					item.text, grayR, grayG, grayB)
+				currentY -= 18
+
+			case "section":
+				currentY -= 4
+
+				content.WriteString("q\n")
+				fmt.Fprintf(&content, "%.6f %.6f %.6f rg\n", greenR, greenG, greenB)
+				fmt.Fprintf(&content, "%.2f %.2f %.2f %.2f re f\n",
+					marginLeft, currentY-5, 4, 18)
+
+				fmt.Fprintf(&content, "%.6f %.6f %.6f rg\n", lightR, lightG, lightB)
+				fmt.Fprintf(&content, "%.2f %.2f %.2f %.2f re f\n",
+					marginLeft+7, currentY-5, pageW-marginLeft-marginRight-7, 18)
+				content.WriteString("Q\n")
+
+				writePDFText(&content, "F2", 8.5, marginLeft+15, currentY,
+					item.text, blackR, blackG, blackB)
+				currentY -= 25
+
+			case "meta":
+				// Caja de metadatos compacta.
+				content.WriteString("q\n")
+				fmt.Fprintf(&content, "%.6f %.6f %.6f rg\n", 0.95, 0.955, 0.952)
+				fmt.Fprintf(&content, "%.2f %.2f %.2f %.2f re f\n",
+					marginLeft, currentY-6, pageW-marginLeft-marginRight, 20)
+				content.WriteString("Q\n")
+
+				writePDFKeyValue(&content, item.text, marginLeft+8, currentY,
+					greenR, greenG, greenB, blackR, blackG, blackB)
+				currentY -= 21
+
+			case "kv":
+				writePDFKeyValue(&content, item.text, marginLeft+4, currentY,
+					grayR, grayG, grayB, blackR, blackG, blackB)
+				currentY -= 15
+
+			case "label":
+				writePDFText(&content, "F2", 8, marginLeft+4, currentY,
+					item.text, greenR, greenG, greenB)
+				currentY -= 15
+
+			case "body":
+				writePDFText(&content, "F1", 8.5, marginLeft+4, currentY,
+					item.text, blackR, blackG, blackB)
+				currentY -= 14
+
+			case "legal":
+				writePDFText(&content, "F1", 7, marginLeft+4, currentY,
+					item.text, grayR, grayG, grayB)
+				currentY -= 11
+
+			case "audit":
+				writePDFText(&content, "F1", 6.5, marginLeft+4, currentY,
+					item.text, grayR, grayG, grayB)
+				currentY -= 10
+
+			case "space":
+				currentY -= 7
+			}
+		}
+
+		// Pie.
+		content.WriteString("q\n")
+		fmt.Fprintf(&content, "%.6f %.6f %.6f RG\n", 0.82, 0.82, 0.82)
+		fmt.Fprintf(&content, "0.5 w\n")
+		fmt.Fprintf(&content, "%.2f 38 m %.2f 38 l S\n", marginLeft, pageW-marginRight)
+		content.WriteString("Q\n")
+
+		writePDFText(&content, "F1", 6.5, marginLeft, 25,
+			"ANCOSUR S.A.C. | RUC "+ancosurRUC+" | "+ancosurTelefono,
+			grayR, grayG, grayB)
+		writePDFText(&content, "F1", 6.5, pageW-marginRight-62, 25,
+			fmt.Sprintf("Pagina %d de %d", pageIndex+1, len(pages)),
+			grayR, grayG, grayB)
+
+		contentBytes := []byte(content.String())
+
+		pageObject := fmt.Sprintf(
+			"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %.0f %.0f] "+
+				"/Resources << /Font << /F1 %d 0 R /F2 %d 0 R >> >> "+
+				"/Contents %d 0 R >>",
+			pagesID, pageW, pageH,
+			fontRegularID, fontBoldID, contentIDs[pageIndex],
+		)
+
+		contentObject := fmt.Sprintf(
+			"<< /Length %d >>\nstream\n%s\nendstream",
+			len(contentBytes), contentBytes,
+		)
+
+		objects = append(objects, pageObject, contentObject)
+	}
+
+	offsets := make([]int, len(objects)+1)
+	for i, object := range objects {
+		objectID := i + 1
+		offsets[objectID] = pdf.Len()
+		fmt.Fprintf(&pdf, "%d 0 obj\n%s\nendobj\n", objectID, object)
+	}
+
+	xrefOffset := pdf.Len()
+	pdf.WriteString("xref\n")
+	fmt.Fprintf(&pdf, "0 %d\n", len(objects)+1)
+	pdf.WriteString("0000000000 65535 f \n")
+	for i := 1; i <= len(objects); i++ {
+		fmt.Fprintf(&pdf, "%010d 00000 n \n", offsets[i])
+	}
+	pdf.WriteString("trailer\n")
+	fmt.Fprintf(&pdf, "<< /Size %d /Root %d 0 R >>\n", len(objects)+1, catalogID)
+	pdf.WriteString("startxref\n")
+	fmt.Fprintf(&pdf, "%d\n", xrefOffset)
+	pdf.WriteString("%%EOF\n")
+
+	return []byte(pdf.String()), nil
+}
+
+// writePDFText escribe texto PDF usando fuentes estándar.
+func writePDFText(
+	b *strings.Builder,
+	font string,
+	size float64,
+	x float64,
+	y float64,
+	text string,
+	r float64,
+	g float64,
+	bl float64,
+) {
+	text = escapePDFText(normalizarPDF(text))
+
+	fmt.Fprintf(
+		b,
+		"BT /%s %.2f Tf %.6f %.6f %.6f rg %.2f %.2f Td (%s) Tj ET\n",
+		font, size, r, g, bl, x, y, text,
+	)
+}
+
+func writePDFKeyValue(
+	b *strings.Builder,
+	line string,
+	x float64,
+	y float64,
+	keyR float64,
+	keyG float64,
+	keyB float64,
+	valueR float64,
+	valueG float64,
+	valueB float64,
+) {
+	parts := strings.SplitN(line, ":", 2)
+	if len(parts) != 2 {
+		writePDFText(b, "F1", 8.5, x, y, line, valueR, valueG, valueB)
+		return
+	}
+
+	key := strings.TrimSpace(parts[0]) + ":"
+	value := strings.TrimSpace(parts[1])
+
+	writePDFText(b, "F2", 8, x, y, key, keyR, keyG, keyB)
+
+	// Ancho aproximado para Helvetica.
+	keyWidth := float64(len([]rune(key)))*4.35 + 7
+	maxWidth := 595.0 - 42.0 - keyWidth - x
+	partsValue := wrapPDFLine(value, int(maxWidth/4.5))
+	if len(partsValue) == 0 {
+		return
+	}
+
+	writePDFText(b, "F1", 8.5, x+keyWidth, y, partsValue[0],
+		valueR, valueG, valueB)
+
+	// Las líneas adicionales se colocan debajo. El generador principal
+	// reserva una línea por bloque; para textos extensos usamos una sangría.
+	for i := 1; i < len(partsValue); i++ {
+		writePDFText(b, "F1", 8.5, x+keyWidth, y-float64(i)*11,
+			partsValue[i], valueR, valueG, valueB)
+	}
+}
+
+func escapePDFText(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, "(", `\(`)
+	s = strings.ReplaceAll(s, ")", `\)`)
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", " ")
+	return s
 }
 
 // ============================================================
@@ -1774,122 +2184,6 @@ func obtenerIPCliente(c *gin.Context) string {
 		return host
 	}
 	return ""
-}
-
-// ============================================================
-// PDF SIMPLE SIN DEPENDENCIAS EXTERNAS
-// ============================================================
-
-// buildSimplePDF genera un PDF de texto multipágina con fuentes estándar.
-// Se usa deliberadamente una implementación pequeña para que reclamos.go
-// no dependa de otro módulo PDF. Para caracteres fuera de WinAnsi se hace
-// transliteración básica.
-func buildSimplePDF(lines []string) ([]byte, error) {
-	const (
-		pageW = 595
-		pageH = 842
-		left  = 45
-		topY  = 800
-		step  = 16
-	)
-
-	wrapped := make([]string, 0, len(lines)*2)
-	for _, line := range lines {
-		clean := normalizarPDF(line)
-		if clean == "" {
-			wrapped = append(wrapped, "")
-			continue
-		}
-		parts := wrapPDFLine(clean, 90)
-		wrapped = append(wrapped, parts...)
-	}
-
-	pages := make([][]string, 0)
-	current := make([]string, 0)
-	maxLines := int((topY - 45) / step)
-	for _, line := range wrapped {
-		if len(current) >= maxLines {
-			pages = append(pages, current)
-			current = make([]string, 0)
-		}
-		current = append(current, line)
-	}
-	if len(current) > 0 || len(pages) == 0 {
-		pages = append(pages, current)
-	}
-
-	var b strings.Builder
-	b.WriteString("%PDF-1.4\n")
-	b.WriteString("%\xE2\xE3\xCF\xD3\n")
-
-	objects := make([]string, 0, 3+len(pages)*2)
-	catalogID := 1
-	pagesID := 2
-	fontID := 3
-	nextID := 4
-	pageIDs := make([]int, 0, len(pages))
-	contentIDs := make([]int, 0, len(pages))
-
-	for range pages {
-		pageIDs = append(pageIDs, nextID)
-		nextID++
-		contentIDs = append(contentIDs, nextID)
-		nextID++
-	}
-
-	kids := make([]string, 0, len(pageIDs))
-	for _, id := range pageIDs {
-		kids = append(kids, fmt.Sprintf("%d 0 R", id))
-	}
-
-	objects = append(objects,
-		fmt.Sprintf("<< /Type /Catalog /Pages %d 0 R >>", pagesID),
-		fmt.Sprintf("<< /Type /Pages /Count %d /Kids [%s] >>", len(pageIDs), strings.Join(kids, " ")),
-		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-	)
-
-	for i := range pages {
-		content := pdfPageContent(pages[i], left, topY, step)
-		objects = append(objects,
-			fmt.Sprintf("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d %d] /Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R >>", pagesID, pageW, pageH, fontID, contentIDs[i]),
-			fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
-		)
-	}
-
-	offsets := make([]int, len(objects)+1)
-	for i, obj := range objects {
-		offsets[i+1] = b.Len()
-		b.WriteString(fmt.Sprintf("%d 0 obj\n%s\nendobj\n", i+1, obj))
-	}
-
-	xref := b.Len()
-	b.WriteString(fmt.Sprintf("xref\n0 %d\n", len(objects)+1))
-	b.WriteString("0000000000 65535 f \n")
-	for i := 1; i < len(offsets); i++ {
-		b.WriteString(fmt.Sprintf("%010d 00000 n \n", offsets[i]))
-	}
-	b.WriteString(fmt.Sprintf("trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, catalogID, xref))
-
-	return []byte(b.String()), nil
-}
-
-func pdfPageContent(lines []string, left, topY, step int) string {
-	var b strings.Builder
-	b.WriteString("BT\n/F1 10 Tf\n")
-	y := topY
-	for _, line := range lines {
-		if line == "" {
-			y -= step
-			continue
-		}
-		escaped := strings.ReplaceAll(line, `\`, `\\`)
-		escaped = strings.ReplaceAll(escaped, "(", `\(`)
-		escaped = strings.ReplaceAll(escaped, ")", `\)`)
-		b.WriteString(fmt.Sprintf("1 0 0 1 %d %d Tm (%s) Tj\n", left, y, escaped))
-		y -= step
-	}
-	b.WriteString("ET\n")
-	return b.String()
 }
 
 func wrapPDFLine(s string, max int) []string {
