@@ -1125,7 +1125,6 @@ func reportesReclamos(db *pgxpool.Pool) gin.HandlerFunc {
 // contenido del registro en datos_originales JSONB y la URL de la
 // constancia. El PDF se reconstruye cuando el dashboard lo solicita.
 // ============================================================
-
 func generarPDFReclamo(db *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, ok := parseID(c)
@@ -1168,92 +1167,284 @@ func generarPDFReclamo(db *pgxpool.Pool) gin.HandlerFunc {
 		)
 
 		err := db.QueryRow(ctx, `
-			SELECT codigo_registro, created_at, tipo,
-			       nombres, apellidos, tipo_documento, numero_documento,
-			       email, COALESCE(telefono,''), COALESCE(domicilio,''),
-			       COALESCE(departamento,''), COALESCE(provincia,''), COALESCE(distrito,''),
-			       proyecto, COALESCE(estado_proyecto,''), COALESCE(edificio,''), COALESCE(unidad,''),
-			       COALESCE(numero_operacion,''), COALESCE(producto_servicio,''), monto_reclamado,
-			       detalle, pedido_concreto, estado, prioridad, COALESCE(respuesta,''),
-			       COALESCE(medio_respuesta,''), fecha_respuesta, COALESCE(datos_originales,'{}'::jsonb)::text
+			SELECT
+				codigo_registro,
+				created_at,
+				tipo,
+				nombres,
+				apellidos,
+				tipo_documento,
+				numero_documento,
+				email,
+				COALESCE(telefono, ''),
+				COALESCE(domicilio, ''),
+				COALESCE(departamento, ''),
+				COALESCE(provincia, ''),
+				COALESCE(distrito, ''),
+				COALESCE(proyecto, ''),
+				COALESCE(estado_proyecto, ''),
+				COALESCE(edificio, ''),
+				COALESCE(unidad, ''),
+				COALESCE(numero_operacion, ''),
+				COALESCE(producto_servicio, ''),
+				monto_reclamado,
+				COALESCE(detalle, ''),
+				COALESCE(pedido_concreto, ''),
+				estado,
+				prioridad,
+				COALESCE(respuesta, ''),
+				COALESCE(medio_respuesta, ''),
+				fecha_respuesta,
+				COALESCE(datos_originales, '{}'::jsonb)::text
 			FROM libro_reclamaciones
 			WHERE id = $1
-		`, id).Scan(&codigo, &fecha, &tipo, &nombres, &apellidos, &tipoDoc, &numDoc, &email, &telefono, &domicilio,
-			&departamento, &provincia, &distrito, &proyecto, &estadoProj, &edificio, &unidad, &numOperacion,
-			&producto, &monto, &detalle, &pedido, &estado, &prioridad, &respuesta, &medio, &fechaResp, &original)
+		`, id).Scan(
+			&codigo,
+			&fecha,
+			&tipo,
+			&nombres,
+			&apellidos,
+			&tipoDoc,
+			&numDoc,
+			&email,
+			&telefono,
+			&domicilio,
+			&departamento,
+			&provincia,
+			&distrito,
+			&proyecto,
+			&estadoProj,
+			&edificio,
+			&unidad,
+			&numOperacion,
+			&producto,
+			&monto,
+			&detalle,
+			&pedido,
+			&estado,
+			&prioridad,
+			&respuesta,
+			&medio,
+			&fechaResp,
+			&original,
+		)
+
 		if err != nil {
 			if err == pgx.ErrNoRows {
-				c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "La reclamación no existe."})
+				c.JSON(http.StatusNotFound, gin.H{
+					"success": false,
+					"message": "La reclamación no existe.",
+				})
 				return
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "No se pudo generar la constancia.", "error": err.Error()})
+
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": "No se pudo obtener la información del registro.",
+				"error":   err.Error(),
+			})
 			return
 		}
 
+		// =========================================================
+		// DATOS GENERALES
+		// =========================================================
+
+		nombreCompleto := strings.TrimSpace(
+			strings.Join([]string{nombres, apellidos}, " "),
+		)
+
+		ubicacion := strings.TrimSpace(
+			strings.Join(
+				[]string{
+					departamento,
+					provincia,
+					distrito,
+				},
+				" / ",
+			),
+		)
+
+		// =========================================================
+		// CONTENIDO DEL DOCUMENTO
+		// =========================================================
+
 		lines := []string{
-			"ANCOSUR",
-			"LIBRO DE RECLAMACIONES - CONSTANCIA",
+			"ANCOSUR S.A.C.",
+			"LIBRO DE RECLAMACIONES",
+			"INFORME DE REGISTRO",
 			"",
+			"INFORMACION DEL REGISTRO",
 			"Codigo de registro: " + codigo,
 			"Fecha de registro: " + fecha.Format("02/01/2006 15:04"),
-			"Tipo: " + tipo,
+			"Tipo de registro: " + strings.ToUpper(tipo),
+			"Estado: " + strings.ToUpper(estado),
+			"Prioridad: " + strings.ToUpper(prioridad),
 			"",
-			"DATOS DEL CONSUMIDOR",
-			"Nombres: " + nombres + " " + apellidos,
+			"1. DATOS DEL CONSUMIDOR",
+			"Nombres y apellidos: " + nombreCompleto,
 			"Documento: " + tipoDoc + " - " + numDoc,
-			"Correo: " + email,
+			"Correo electronico: " + email,
 			"Telefono: " + telefono,
 			"Domicilio: " + domicilio,
-			"Ubicacion: " + strings.TrimSpace(strings.Join([]string{departamento, provincia, distrito}, " / ")),
+			"Ubicacion: " + ubicacion,
 			"",
-			"INFORMACION DEL PROYECTO / SERVICIO",
+			"2. INFORMACION DEL PROYECTO / SERVICIO",
 			"Proyecto: " + proyecto,
 			"Estado del proyecto: " + estadoProj,
-			"Edificio/Torre/Bloque: " + edificio,
-			"Unidad: " + unidad,
-			"N. de operacion: " + numOperacion,
-			"Producto/Servicio: " + producto,
+			"Edificio / Torre / Bloque: " + edificio,
+			"Unidad inmobiliaria: " + unidad,
+			"Numero de operacion: " + numOperacion,
+			"Producto / Servicio: " + producto,
 			"Monto reclamado: " + formatoMonto(monto),
 			"",
-			"CONTENIDO",
-			"Detalle:",
+			"3. DETALLE DE LA RECLAMACION",
 		}
-		lines = append(lines, strings.Split(normalizarPDF(detalle), "\n")...)
-		lines = append(lines, "", "Pedido concreto:")
-		lines = append(lines, strings.Split(normalizarPDF(pedido), "\n")...)
-		lines = append(lines, "", "ESTADO DE ATENCION")
-		lines = append(lines, "Estado: "+estado, "Prioridad: "+prioridad)
-		if respuesta != "" {
-			lines = append(lines, "Medio de respuesta: "+medio)
-			if fechaResp != nil {
-				lines = append(lines, "Fecha de respuesta: "+fechaResp.Format("02/01/2006 15:04"))
-			}
-			lines = append(lines, "Respuesta:")
-			lines = append(lines, strings.Split(normalizarPDF(respuesta), "\n")...)
-		}
-		lines = append(lines, "", "Documento generado desde el registro conservado en la base de datos.")
 
-		// Incluimos una huella del JSON original para comprobar que la constancia
-		// corresponde al contenido almacenado.
-		if len(original) > 0 {
-			lines = append(lines, "Hash-logico: "+fmt.Sprintf("%x", simpleHash(original)))
+		// Detalle
+		detalleNormalizado := normalizarPDF(detalle)
+		if detalleNormalizado == "" {
+			detalleNormalizado = "No se registro informacion."
 		}
+
+		lines = append(
+			lines,
+			strings.Split(detalleNormalizado, "\n")...,
+		)
+
+		// Pedido
+		lines = append(
+			lines,
+			"",
+			"4. PEDIDO CONCRETO DEL CONSUMIDOR",
+		)
+
+		pedidoNormalizado := normalizarPDF(pedido)
+		if pedidoNormalizado == "" {
+			pedidoNormalizado = "No se registro informacion."
+		}
+
+		lines = append(
+			lines,
+			strings.Split(pedidoNormalizado, "\n")...,
+		)
+
+		// Gestión
+		lines = append(
+			lines,
+			"",
+			"5. GESTION Y ATENCION DEL REGISTRO",
+			"Estado actual: "+estado,
+			"Prioridad: "+prioridad,
+		)
+
+		if respuesta != "" {
+			lines = append(
+				lines,
+				"Medio de respuesta: "+medio,
+			)
+
+			if fechaResp != nil {
+				lines = append(
+					lines,
+					"Fecha de respuesta: "+
+						fechaResp.Format("02/01/2006 15:04"),
+				)
+			}
+
+			lines = append(
+				lines,
+				"",
+				"Respuesta de ANCOSUR:",
+			)
+
+			respuestaNormalizada := normalizarPDF(respuesta)
+
+			lines = append(
+				lines,
+				strings.Split(respuestaNormalizada, "\n")...,
+			)
+		} else {
+			lines = append(
+				lines,
+				"Respuesta: Pendiente de atención.",
+			)
+		}
+
+		// Trazabilidad
+		lines = append(
+			lines,
+			"",
+			"6. CONSTANCIA DEL REGISTRO",
+			"El presente documento ha sido generado a partir de la informacion",
+			"almacenada en el Libro de Reclamaciones de ANCOSUR S.A.C.",
+			"El codigo de registro permite identificar y consultar el caso.",
+		)
+
+		// Huella lógica del registro original
+		if len(original) > 0 {
+			lines = append(
+				lines,
+				"",
+				"Identificador de integridad: "+
+					fmt.Sprintf("%x", simpleHash(original)),
+			)
+		}
+
+		// =========================================================
+		// GENERACION DEL PDF
+		// =========================================================
 
 		pdf, err := buildSimplePDF(lines)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "No se pudo construir el PDF.", "error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": "No se pudo construir el PDF.",
+				"error":   err.Error(),
+			})
 			return
 		}
 
-		filename := codigo
-		if filename == "" {
-			filename = fmt.Sprintf("reclamo-%d", id)
-		}
-		filename = strings.ReplaceAll(filename, "\"", "")
+		// =========================================================
+		// RESPUESTA
+		// =========================================================
 
-		c.Data(http.StatusOK, "application/pdf", pdf)
-		c.Header("Content-Disposition", fmt.Sprintf(`inline; filename="%s.pdf"`, filename))
-		c.Header("Cache-Control", "private, no-store")
+		filename := codigo
+
+		if filename == "" {
+			filename = fmt.Sprintf(
+				"ANCOSUR-Libro-Reclamaciones-%d",
+				id,
+			)
+		}
+
+		filename = strings.ReplaceAll(filename, `"`, "")
+		filename = strings.ReplaceAll(filename, "/", "-")
+		filename = strings.ReplaceAll(filename, "\\", "-")
+
+		c.Header(
+			"Content-Disposition",
+			fmt.Sprintf(
+				`inline; filename="%s.pdf"`,
+				filename,
+			),
+		)
+
+		c.Header(
+			"Cache-Control",
+			"private, no-store, max-age=0",
+		)
+
+		c.Header(
+			"X-Content-Type-Options",
+			"nosniff",
+		)
+
+		c.Data(
+			http.StatusOK,
+			"application/pdf",
+			pdf,
+		)
 	}
 }
 
