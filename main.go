@@ -145,15 +145,11 @@ func main() {
 		db,
 	)
 
-	// =========================================================
-	// RUTAS FUTURAS
-	// =========================================================
+	routes.ProyectosWebRoutes(
+		router,
+		db,
+	)
 
-	// routes.RutasProyectos(api, db)
-	// routes.RutasCampanias(api, db)
-	// routes.RutasInversiones(api, db)
-	// routes.RutasTerrenos(api, db)
-	// routes.RutasClientes(api, db)
 
 	// =========================================================
 	// SERVIDOR

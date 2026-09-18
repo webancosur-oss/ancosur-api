@@ -280,7 +280,7 @@ func actualizarSeguimientoFormularioWeb(
 					observaciones_comerciales =
 						NULLIF($15, ''),
 
-					actualizado_en =
+					updated_at =
 						NOW()
 
 				WHERE id =
@@ -566,7 +566,7 @@ func crearFormularioWeb(
 				)
 				RETURNING
 					id::text,
-					creado_en
+					created_at
 				`,
 				request.CodigoFormulario,
 				request.NombreFormulario,
@@ -946,7 +946,7 @@ func crearFormularioWeb(
 					enviado_crm_en =
 						NOW(),
 
-					actualizado_en =
+					updated_at =
 						NOW()
 
 				WHERE id =
@@ -971,7 +971,7 @@ func crearFormularioWeb(
 					"data": gin.H{
 						"id": id,
 
-						"creado_en": creadoEn,
+						"created_at": creadoEn,
 
 						"guardado_local": true,
 
@@ -1009,7 +1009,7 @@ func crearFormularioWeb(
 				"data": gin.H{
 					"id": id,
 
-					"creado_en": creadoEn,
+					"created_at": creadoEn,
 
 					"guardado_local": true,
 
@@ -1352,7 +1352,7 @@ func guardarCRMError(
 				enviado_crm_en =
 					NULL,
 
-				actualizado_en =
+				updated_at =
 					NOW()
 
 			WHERE id =
@@ -1401,7 +1401,7 @@ func responderCRMError(
 			"data": gin.H{
 				"id": id,
 
-				"creado_en": creadoEn,
+				"created_at": creadoEn,
 
 				"guardado_local": true,
 
@@ -1744,7 +1744,7 @@ func listarFormulariosWeb(
 						''
 					),
 
-					l.creado_en,
+					l.created_at,
 
 					l.enviado_crm_en,
 
@@ -1821,7 +1821,7 @@ func listarFormulariosWeb(
 					ON a.id = l.asesor_id
 
 				ORDER BY
-					l.creado_en DESC
+					l.created_at DESC
 				`,
 			)
 
@@ -1887,7 +1887,7 @@ func listarFormulariosWeb(
 
 			ErrorCRM string `json:"error_crm"`
 
-			CreadoEn time.Time `json:"creado_en"`
+			CreadoEn time.Time `json:"created_at"`
 
 			EnviadoCRMEn *time.Time `json:"enviado_crm_en"`
 

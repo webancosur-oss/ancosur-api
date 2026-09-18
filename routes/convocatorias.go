@@ -38,8 +38,8 @@ type Convocatoria struct {
 
 	Activo bool `json:"activo"`
 
-	CreadoEn      time.Time `json:"creado_en"`
-	ActualizadoEn time.Time `json:"actualizado_en"`
+	CreadoEn      time.Time `json:"created_at"`
+	ActualizadoEn time.Time `json:"updated_at"`
 }
 
 type CambiarEstadoConvocatoriaRequest struct {
@@ -328,8 +328,8 @@ func crearConvocatoria(
 
 					activo,
 
-					creado_en,
-					actualizado_en
+					created_at,
+					updated_at
 				)
 				VALUES (
 					$1,
@@ -356,8 +356,8 @@ func crearConvocatoria(
 
 					activo,
 
-					creado_en,
-					actualizado_en
+					created_at,
+					updated_at
 				`,
 				titulo,
 				descripcion,
@@ -449,10 +449,10 @@ func listarConvocatorias(
 
 					activo,
 
-					creado_en,
-					actualizado_en
+					created_at,
+					updated_at
 				FROM convocatorias_trabajo
-				ORDER BY creado_en DESC
+				ORDER BY created_at DESC
 				`,
 			)
 
@@ -575,11 +575,11 @@ func listarConvocatoriasPublicas(
 
 					activo,
 
-					creado_en,
-					actualizado_en
+					created_at,
+					updated_at
 				FROM convocatorias_trabajo
 				WHERE activo = TRUE
-				ORDER BY creado_en DESC
+				ORDER BY created_at DESC
 				`,
 			)
 
@@ -836,11 +836,11 @@ func actualizarEstadoConvocatoria(
 				UPDATE convocatorias_trabajo
 				SET
 					activo = $1,
-					actualizado_en = NOW()
+					updated_at = NOW()
 				WHERE id = $2
 				RETURNING
 					activo,
-					actualizado_en
+					updated_at
 				`,
 				*request.Activo,
 				id,
@@ -898,7 +898,7 @@ func actualizarEstadoConvocatoria(
 
 					"activo": activo,
 
-					"actualizado_en": actualizadoEn,
+					"updated_at": actualizadoEn,
 				},
 			},
 		)
@@ -1049,7 +1049,7 @@ func actualizarConvocatoria(
 					SET
 						titulo = $1,
 						descripcion = $2,
-						actualizado_en = NOW()
+						updated_at = NOW()
 					WHERE id = $3
 					RETURNING
 						id,
@@ -1062,8 +1062,8 @@ func actualizarConvocatoria(
 
 						activo,
 
-						creado_en,
-						actualizado_en
+						created_at,
+						updated_at
 					`,
 					titulo,
 					descripcion,
@@ -1205,7 +1205,7 @@ func actualizarConvocatoria(
 					imagen_tamano = $5,
 					imagen_data = $6,
 
-					actualizado_en = NOW()
+					updated_at = NOW()
 				WHERE id = $7
 				RETURNING
 					id,
@@ -1218,8 +1218,8 @@ func actualizarConvocatoria(
 
 					activo,
 
-					creado_en,
-					actualizado_en
+					created_at,
+					updated_at
 				`,
 				titulo,
 				descripcion,

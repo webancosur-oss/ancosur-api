@@ -53,8 +53,8 @@ type PostulacionTrabajo struct {
 	UTMContent  *string `json:"utm_content"`
 	UTMTerm     *string `json:"utm_term"`
 
-	CreadoEn      time.Time `json:"creado_en"`
-	ActualizadoEn time.Time `json:"actualizado_en"`
+	CreadoEn      time.Time `json:"created_at"`
+	ActualizadoEn time.Time `json:"updated_at"`
 }
 
 /* =========================================================
@@ -559,7 +559,7 @@ func crearPostulacion(
 				)
 				RETURNING
 					id,
-					creado_en
+					created_at
 				`,
 				vacanteID,
 				vacanteTitulo,
@@ -634,7 +634,7 @@ func crearPostulacion(
 
 					"cv_guardado": true,
 
-					"creado_en": creadoEn,
+					"created_at": creadoEn,
 				},
 			},
 		)
@@ -701,14 +701,14 @@ func listarPostulaciones(
 					utm_content,
 					utm_term,
 
-					creado_en,
-					actualizado_en
+					created_at,
+					updated_at
 
 				FROM
 					postulaciones_trabajo
 
 				ORDER BY
-					creado_en DESC
+					created_at DESC
 				`,
 			)
 
@@ -900,8 +900,8 @@ func obtenerPostulacion(
 					utm_content,
 					utm_term,
 
-					creado_en,
-					actualizado_en
+					created_at,
+					updated_at
 
 				FROM
 					postulaciones_trabajo
@@ -1332,7 +1332,7 @@ type actualizarEstadoPostulacionRequest struct {
 type estadoPostulacionResponse struct {
 	ID            string    `json:"id"`
 	Estado        string    `json:"estado"`
-	ActualizadoEn time.Time `json:"actualizado_en"`
+	ActualizadoEn time.Time `json:"updated_at"`
 }
 
 /* =========================================================
@@ -1456,12 +1456,12 @@ func actualizarEstadoPostulacion(
 				UPDATE postulaciones_trabajo
 				SET
 					estado = $1,
-					actualizado_en = NOW()
+					updated_at = NOW()
 				WHERE id = $2
 				RETURNING
 					id,
 					estado,
-					actualizado_en
+					updated_at
 				`,
 				estado,
 				id,
