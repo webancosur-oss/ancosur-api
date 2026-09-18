@@ -45,8 +45,8 @@ type ProyectoWeb struct {
 	Activo bool `json:"activo"`
 	Orden  int  `json:"orden"`
 
-	CreadoEn      time.Time `json:"creado_en"`
-	ActualizadoEn time.Time `json:"actualizado_en"`
+	CreadoEn      time.Time `json:"created_at"`
+	ActualizadoEn time.Time `json:"updated_at"`
 }
 
 /* =========================================================
@@ -360,8 +360,8 @@ func listarProyectosWeb(db *pgxpool.Pool) gin.HandlerFunc {
 				activo,
 				orden,
 
-				creado_en,
-				actualizado_en
+				created_at,
+				updated_at
 
 			FROM proyectos_web
 
@@ -369,7 +369,7 @@ func listarProyectosWeb(db *pgxpool.Pool) gin.HandlerFunc {
 
 			ORDER BY
 				orden ASC,
-				creado_en DESC
+				created_at DESC
 
 			LIMIT $` + strconv.Itoa(
 			limitParam,
@@ -916,8 +916,8 @@ func obtenerProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 				activo,
 				orden,
 
-				creado_en,
-				actualizado_en
+				created_at,
+				updated_at
 
 			FROM proyectos_web
 
@@ -1355,7 +1355,7 @@ func actualizarProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 					activo = $17,
 					orden = $18,
 
-					actualizado_en = NOW()
+					updated_at = NOW()
 
 				WHERE id = $19
 				`,
@@ -1436,7 +1436,7 @@ func actualizarProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 					activo = $13,
 					orden = $14,
 
-					actualizado_en = NOW()
+					updated_at = NOW()
 
 				WHERE id = $15
 				`,
