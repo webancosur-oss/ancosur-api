@@ -145,11 +145,7 @@ func main() {
 		db,
 	)
 
-	routes.ProyectosWebRoutes(
-		router,
-		db,
-	)
-
+	routes.RutasProyectosWeb(api, db)
 
 	// =========================================================
 	// SERVIDOR
