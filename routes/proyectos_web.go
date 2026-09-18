@@ -1,7 +1,6 @@
 package routes
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,582 +9,294 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-/* =========================================================
-   CONFIGURACIÓN
-========================================================= */
-
-const maxProyectoWebImageSize int64 = 5 * 1024 * 1024 // 5 MB
-
-/* =========================================================
-   MODELO
-========================================================= */
+const maxProyectoWebImageSize int64 = 5 * 1024 * 1024
 
 type ProyectoWeb struct {
 	ID string `json:"id"`
 
-	Codigo    string `json:"codigo"`
-	Titulo    string `json:"titulo"`
-	Slug      string `json:"slug"`
+	Codigo string `json:"codigo"`
+	Titulo string `json:"titulo"`
+	Slug   string `json:"slug"`
+
 	Tipo      string `json:"tipo"`
 	Ciudad    string `json:"ciudad"`
 	Direccion string `json:"direccion"`
 	Etapa     string `json:"etapa"`
 
-	Dormitorios  *string  `json:"dormitorios"`
+	ImagenNombre string `json:"imagen_nombre"`
+	ImagenTipo   string `json:"imagen_tipo"`
+	ImagenTamano int64  `json:"imagen_tamano"`
+	ImagenURL    string `json:"imagen_url"`
+
+	Dormitorios *string `json:"dormitorios"`
+
 	MetrajeDesde *float64 `json:"metraje_desde"`
 	MetrajeHasta *float64 `json:"metraje_hasta"`
 
-	Estado      string   `json:"estado"`
+	Estado string `json:"estado"`
+
 	PrecioDesde *float64 `json:"precio_desde"`
 
 	Activo bool `json:"activo"`
 	Orden  int  `json:"orden"`
-
-	ImagenNombre string `json:"imagen_nombre"`
-	ImagenTipo   string `json:"imagen_tipo"`
-	ImagenTamano int64  `json:"imagen_tamano"`
-
-	ImagenURL string `json:"imagen_url"`
 
 	CreadoEn      time.Time `json:"creado_en"`
 	ActualizadoEn time.Time `json:"actualizado_en"`
 }
 
 /* =========================================================
-   REQUEST
-========================================================= */
-
-type CrearProyectoWebRequest struct {
-	Codigo       string   `json:"codigo"`
-	Titulo       string   `json:"titulo"`
-	Slug         string   `json:"slug"`
-	Tipo         string   `json:"tipo"`
-	Ciudad       string   `json:"ciudad"`
-	Direccion    string   `json:"direccion"`
-	Etapa        string   `json:"etapa"`
-	Dormitorios  *string  `json:"dormitorios"`
-	MetrajeDesde *float64 `json:"metraje_desde"`
-	MetrajeHasta *float64 `json:"metraje_hasta"`
-	Estado       string   `json:"estado"`
-	PrecioDesde  *float64 `json:"precio_desde"`
-	Activo       bool     `json:"activo"`
-	Orden        int      `json:"orden"`
-}
-
-type ActualizarProyectoWebRequest struct {
-	Codigo       string   `json:"codigo"`
-	Titulo       string   `json:"titulo"`
-	Slug         string   `json:"slug"`
-	Tipo         string   `json:"tipo"`
-	Ciudad       string   `json:"ciudad"`
-	Direccion    string   `json:"direccion"`
-	Etapa        string   `json:"etapa"`
-	Dormitorios  *string  `json:"dormitorios"`
-	MetrajeDesde *float64 `json:"metraje_desde"`
-	MetrajeHasta *float64 `json:"metraje_hasta"`
-	Estado       string   `json:"estado"`
-	PrecioDesde  *float64 `json:"precio_desde"`
-	Activo       bool     `json:"activo"`
-	Orden        int      `json:"orden"`
-}
-
-/* =========================================================
    RUTAS
 ========================================================= */
 
-func RutasProyectosWeb(
-	api *gin.RouterGroup,
-	db *pgxpool.Pool,
-) {
+func RutasProyectosWeb(api *gin.RouterGroup, db *pgxpool.Pool) {
 
-	/*
-		LISTAR
-		DASHBOARD
-	*/
-	api.GET(
-		"/web/proyectos",
-		listarProyectosWeb(db),
-	)
+	proyectos := api.Group("/web/proyectos")
 
-	/*
-		CREAR
-	*/
-	api.POST(
-		"/web/proyectos",
-		crearProyectoWeb(db),
-	)
+	proyectos.GET("", listarProyectosWeb(db))
 
-	/*
-		OBTENER POR ID
-	*/
-	api.GET(
-		"/web/proyectos/:id",
-		obtenerProyectoWeb(db),
-	)
+	proyectos.POST("", crearProyectoWeb(db))
 
-	/*
-		IMAGEN
-	*/
-	api.GET(
-		"/web/proyectos/:id/imagen",
-		obtenerImagenProyectoWeb(db),
-	)
+	proyectos.GET("/:id", obtenerProyectoWeb(db))
 
-	/*
-		EDITAR
-	*/
-	api.PUT(
-		"/web/proyectos/:id",
-		actualizarProyectoWeb(db),
-	)
+	proyectos.GET("/:id/imagen", obtenerImagenProyectoWeb(db))
 
-	/*
-		ELIMINAR
-	*/
-	api.DELETE(
-		"/web/proyectos/:id",
-		eliminarProyectoWeb(db),
-	)
+	proyectos.PUT("/:id", actualizarProyectoWeb(db))
+
+	proyectos.DELETE("/:id", eliminarProyectoWeb(db))
 }
 
 /* =========================================================
-   CREAR PROYECTO
+   LISTAR PROYECTOS
 ========================================================= */
 
-func crearProyectoWeb(
-	db *pgxpool.Pool,
-) gin.HandlerFunc {
+func listarProyectosWeb(db *pgxpool.Pool) gin.HandlerFunc {
 
 	return func(c *gin.Context) {
 
-		/* =========================================
-		   MULTIPART
-		========================================= */
+		page := parseIntProyecto(
+			c.DefaultQuery("page", "1"),
+			1,
+		)
 
-		if err := c.Request.ParseMultipartForm(
-			maxProyectoWebImageSize,
-		); err != nil {
+		limit := parseIntProyecto(
+			c.DefaultQuery("limit", "10"),
+			10,
+		)
 
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "No se pudo procesar el formulario.",
-					"error":   err.Error(),
-				},
-			)
-
-			return
+		if page < 1 {
+			page = 1
 		}
 
-		/* =========================================
-		   CAMPOS
-		========================================= */
+		if limit < 1 {
+			limit = 10
+		}
 
-		codigo := strings.TrimSpace(
-			c.PostForm("codigo"),
-		)
+		if limit > 100 {
+			limit = 100
+		}
 
-		titulo := strings.TrimSpace(
-			c.PostForm("titulo"),
-		)
+		offset := (page - 1) * limit
 
-		slug := strings.TrimSpace(
-			c.PostForm("slug"),
-		)
-
-		tipo := strings.TrimSpace(
-			c.PostForm("tipo"),
-		)
-
-		ciudad := strings.TrimSpace(
-			c.PostForm("ciudad"),
-		)
-
-		direccion := strings.TrimSpace(
-			c.PostForm("direccion"),
-		)
-
-		etapa := strings.TrimSpace(
-			c.PostForm("etapa"),
+		buscar := strings.TrimSpace(
+			c.Query("buscar"),
 		)
 
 		estado := strings.TrimSpace(
-			c.PostForm("estado"),
+			c.Query("estado"),
 		)
 
-		if estado == "" {
-			estado = "disponible"
-		}
-
-		activo := parseBool(
-			c.PostForm("activo"),
-			true,
+		tipo := strings.TrimSpace(
+			c.Query("tipo"),
 		)
 
-		orden := parseInt(
-			c.PostForm("orden"),
-			0,
+		ciudad := strings.TrimSpace(
+			c.Query("ciudad"),
 		)
 
-		dormitorios := nullableString(
-			c.PostForm("dormitorios"),
+		etapa := strings.TrimSpace(
+			c.Query("etapa"),
 		)
 
-		metrajeDesde := parseNullableFloat(
-			c.PostForm("metraje_desde"),
+		activo := strings.TrimSpace(
+			c.Query("activo"),
 		)
 
-		metrajeHasta := parseNullableFloat(
-			c.PostForm("metraje_hasta"),
+		args := make([]any, 0)
+
+		where := []string{
+			"1 = 1",
+		}
+
+		/* =====================================================
+		   BUSCAR
+		===================================================== */
+
+		if buscar != "" {
+
+			args = append(
+				args,
+				"%"+buscar+"%",
+			)
+
+			param := strconv.Itoa(
+				len(args),
+			)
+
+			where = append(
+				where,
+				`(
+					codigo ILIKE $`+param+`
+					OR titulo ILIKE $`+param+`
+					OR ciudad ILIKE $`+param+`
+					OR direccion ILIKE $`+param+`
+					OR etapa ILIKE $`+param+`
+					OR slug ILIKE $`+param+`
+				)`,
+			)
+		}
+
+		/* =====================================================
+		   ESTADO
+		===================================================== */
+
+		if estado != "" {
+
+			args = append(
+				args,
+				estado,
+			)
+
+			where = append(
+				where,
+				fmt.Sprintf(
+					"estado = $%d",
+					len(args),
+				),
+			)
+		}
+
+		/* =====================================================
+		   TIPO
+		===================================================== */
+
+		if tipo != "" {
+
+			args = append(
+				args,
+				tipo,
+			)
+
+			where = append(
+				where,
+				fmt.Sprintf(
+					"tipo = $%d",
+					len(args),
+				),
+			)
+		}
+
+		/* =====================================================
+		   CIUDAD
+		===================================================== */
+
+		if ciudad != "" {
+
+			args = append(
+				args,
+				ciudad,
+			)
+
+			where = append(
+				where,
+				fmt.Sprintf(
+					"ciudad = $%d",
+					len(args),
+				),
+			)
+		}
+
+		/* =====================================================
+		   ETAPA
+		===================================================== */
+
+		if etapa != "" {
+
+			args = append(
+				args,
+				etapa,
+			)
+
+			where = append(
+				where,
+				fmt.Sprintf(
+					"etapa = $%d",
+					len(args),
+				),
+			)
+		}
+
+		/* =====================================================
+		   ACTIVO
+		===================================================== */
+
+		if activo != "" {
+
+			valor := strings.ToLower(
+				activo,
+			)
+
+			if valor == "true" ||
+				valor == "false" {
+
+				args = append(
+					args,
+					valor == "true",
+				)
+
+				where = append(
+					where,
+					fmt.Sprintf(
+						"activo = $%d",
+						len(args),
+					),
+				)
+			}
+		}
+
+		whereSQL := strings.Join(
+			where,
+			" AND ",
 		)
 
-		precioDesde := parseNullableFloat(
-			c.PostForm("precio_desde"),
-		)
+		/* =====================================================
+		   TOTAL
+		===================================================== */
 
-		/* =========================================
-		   VALIDACIONES
-		========================================= */
+		var total int
 
-		if codigo == "" {
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "El código es obligatorio.",
-				},
-			)
-			return
-		}
-
-		if titulo == "" {
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "El título es obligatorio.",
-				},
-			)
-			return
-		}
-
-		if slug == "" {
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "El slug es obligatorio.",
-				},
-			)
-			return
-		}
-
-		if tipo == "" {
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "El tipo es obligatorio.",
-				},
-			)
-			return
-		}
-
-		if ciudad == "" {
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "La ciudad es obligatoria.",
-				},
-			)
-			return
-		}
-
-		if direccion == "" {
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "La dirección es obligatoria.",
-				},
-			)
-			return
-		}
-
-		if etapa == "" {
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "La etapa es obligatoria.",
-				},
-			)
-			return
-		}
-
-		/* =========================================
-		   IMAGEN
-		========================================= */
-
-		file, header, err := c.Request.FormFile(
-			"imagen",
-		)
-
-		if err != nil {
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "Debes seleccionar una imagen.",
-				},
-			)
-
-			return
-		}
-
-		defer file.Close()
-
-		/* =========================================
-		   TAMAÑO
-		========================================= */
-
-		if header.Size <= 0 {
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "La imagen está vacía.",
-				},
-			)
-
-			return
-		}
-
-		if header.Size > maxProyectoWebImageSize {
-			c.JSON(
-				http.StatusRequestEntityTooLarge,
-				gin.H{
-					"success": false,
-					"message": "La imagen no debe superar los 5 MB.",
-				},
-			)
-
-			return
-		}
-
-		/* =========================================
-		   LEER IMAGEN
-		========================================= */
-
-		imageData, err := io.ReadAll(
-			io.LimitReader(
-				file,
-				maxProyectoWebImageSize+1,
-			),
-		)
-
-		if err != nil {
-			c.JSON(
-				http.StatusInternalServerError,
-				gin.H{
-					"success": false,
-					"message": "No se pudo leer la imagen.",
-				},
-			)
-
-			return
-		}
-
-		if int64(len(imageData)) > maxProyectoWebImageSize {
-			c.JSON(
-				http.StatusRequestEntityTooLarge,
-				gin.H{
-					"success": false,
-					"message": "La imagen no debe superar los 5 MB.",
-				},
-			)
-
-			return
-		}
-
-		/* =========================================
-		   MIME REAL
-		========================================= */
-
-		contentType := http.DetectContentType(
-			imageData,
-		)
-
-		if !imagenProyectoPermitida(contentType) {
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "La imagen debe ser JPG, PNG o WEBP.",
-				},
-			)
-
-			return
-		}
-
-		/* =========================================
-		   INSERT
-		========================================= */
-
-		var proyecto ProyectoWeb
-
-		err = db.QueryRow(
-			context.Background(),
+		err := db.QueryRow(
+			c,
 			`
-			INSERT INTO proyectos_web (
-				codigo,
-				titulo,
-				slug,
-				tipo,
-				ciudad,
-				direccion,
-				etapa,
-
-				dormitorios,
-				metraje_desde,
-				metraje_hasta,
-
-				estado,
-				precio_desde,
-
-				activo,
-				orden,
-
-				imagen_nombre,
-				imagen_tipo,
-				imagen_tamano,
-				imagen_data,
-
-				creado_en,
-				actualizado_en
-			)
-			VALUES (
-				$1,
-				$2,
-				$3,
-				$4,
-				$5,
-				$6,
-				$7,
-
-				$8,
-				$9,
-				$10,
-
-				$11,
-				$12,
-
-				$13,
-				$14,
-
-				$15,
-				$16,
-				$17,
-				$18,
-
-				NOW(),
-				NOW()
-			)
-			RETURNING
-				id,
-				codigo,
-				titulo,
-				slug,
-				tipo,
-				ciudad,
-				direccion,
-				etapa,
-
-				dormitorios,
-				metraje_desde,
-				metraje_hasta,
-
-				estado,
-				precio_desde,
-
-				activo,
-				orden,
-
-				imagen_nombre,
-				imagen_tipo,
-				imagen_tamano,
-
-				creado_en,
-				actualizado_en
-			`,
-			codigo,
-			titulo,
-			slug,
-			tipo,
-			ciudad,
-			direccion,
-			etapa,
-
-			dormitorios,
-			metrajeDesde,
-			metrajeHasta,
-
-			estado,
-			precioDesde,
-
-			activo,
-			orden,
-
-			header.Filename,
-			contentType,
-			len(imageData),
-			imageData,
+			SELECT COUNT(*)
+			FROM proyectos_web
+			WHERE `+whereSQL,
+			args...,
 		).Scan(
-			&proyecto.ID,
-			&proyecto.Codigo,
-			&proyecto.Titulo,
-			&proyecto.Slug,
-			&proyecto.Tipo,
-			&proyecto.Ciudad,
-			&proyecto.Direccion,
-			&proyecto.Etapa,
-
-			&proyecto.Dormitorios,
-			&proyecto.MetrajeDesde,
-			&proyecto.MetrajeHasta,
-
-			&proyecto.Estado,
-			&proyecto.PrecioDesde,
-
-			&proyecto.Activo,
-			&proyecto.Orden,
-
-			&proyecto.ImagenNombre,
-			&proyecto.ImagenTipo,
-			&proyecto.ImagenTamano,
-
-			&proyecto.CreadoEn,
-			&proyecto.ActualizadoEn,
+			&total,
 		)
 
 		if err != nil {
-
-			fmt.Println(
-				"Error creando proyecto web:",
-				err,
-			)
 
 			c.JSON(
 				http.StatusInternalServerError,
 				gin.H{
 					"success": false,
-					"message": "No se pudo registrar el proyecto.",
+					"message": "Error al contar proyectos",
 					"error":   err.Error(),
 				},
 			)
@@ -593,31 +304,36 @@ func crearProyectoWeb(
 			return
 		}
 
-		proyecto.ImagenURL =
-			"/api/web/proyectos/" +
-				proyecto.ID +
-				"/imagen"
+		/* =====================================================
+		   PAGINACIÓN
+		===================================================== */
 
-		c.JSON(
-			http.StatusCreated,
-			gin.H{
-				"success": true,
-				"message": "Proyecto registrado correctamente.",
-				"data":    proyecto,
-			},
+		queryArgs := append(
+			[]any{},
+			args...,
 		)
-	}
-}
 
-/* =========================================================
-   LISTAR
-========================================================= */
+		queryArgs = append(
+			queryArgs,
+			limit,
+		)
 
-func listarProyectosWeb(
-	db *pgxpool.Pool,
-) gin.HandlerFunc {
+		limitParam := len(
+			queryArgs,
+		)
 
-	return func(c *gin.Context) {
+		queryArgs = append(
+			queryArgs,
+			offset,
+		)
+
+		offsetParam := len(
+			queryArgs,
+		)
+
+		/* =====================================================
+		   QUERY
+		===================================================== */
 
 		query := `
 			SELECT
@@ -630,6 +346,10 @@ func listarProyectosWeb(
 				direccion,
 				etapa,
 
+				COALESCE(imagen_nombre, ''),
+				COALESCE(imagen_tipo, ''),
+				COALESCE(imagen_tamano, 0),
+
 				dormitorios,
 				metraje_desde,
 				metraje_hasta,
@@ -640,23 +360,29 @@ func listarProyectosWeb(
 				activo,
 				orden,
 
-				imagen_nombre,
-				imagen_tipo,
-				imagen_tamano,
-
 				creado_en,
 				actualizado_en
 
 			FROM proyectos_web
 
+			WHERE ` + whereSQL + `
+
 			ORDER BY
 				orden ASC,
 				creado_en DESC
-		`
+
+			LIMIT $` + strconv.Itoa(
+			limitParam,
+		) + `
+
+			OFFSET $` + strconv.Itoa(
+			offsetParam,
+		)
 
 		rows, err := db.Query(
-			context.Background(),
+			c,
 			query,
+			queryArgs...,
 		)
 
 		if err != nil {
@@ -665,7 +391,7 @@ func listarProyectosWeb(
 				http.StatusInternalServerError,
 				gin.H{
 					"success": false,
-					"message": "No se pudieron cargar los proyectos.",
+					"message": "Error al obtener proyectos",
 					"error":   err.Error(),
 				},
 			)
@@ -682,34 +408,49 @@ func listarProyectosWeb(
 
 		for rows.Next() {
 
-			var item ProyectoWeb
+			var proyecto ProyectoWeb
 
 			err := rows.Scan(
-				&item.ID,
-				&item.Codigo,
-				&item.Titulo,
-				&item.Slug,
-				&item.Tipo,
-				&item.Ciudad,
-				&item.Direccion,
-				&item.Etapa,
 
-				&item.Dormitorios,
-				&item.MetrajeDesde,
-				&item.MetrajeHasta,
+				&proyecto.ID,
 
-				&item.Estado,
-				&item.PrecioDesde,
+				&proyecto.Codigo,
 
-				&item.Activo,
-				&item.Orden,
+				&proyecto.Titulo,
 
-				&item.ImagenNombre,
-				&item.ImagenTipo,
-				&item.ImagenTamano,
+				&proyecto.Slug,
 
-				&item.CreadoEn,
-				&item.ActualizadoEn,
+				&proyecto.Tipo,
+
+				&proyecto.Ciudad,
+
+				&proyecto.Direccion,
+
+				&proyecto.Etapa,
+
+				&proyecto.ImagenNombre,
+
+				&proyecto.ImagenTipo,
+
+				&proyecto.ImagenTamano,
+
+				&proyecto.Dormitorios,
+
+				&proyecto.MetrajeDesde,
+
+				&proyecto.MetrajeHasta,
+
+				&proyecto.Estado,
+
+				&proyecto.PrecioDesde,
+
+				&proyecto.Activo,
+
+				&proyecto.Orden,
+
+				&proyecto.CreadoEn,
+
+				&proyecto.ActualizadoEn,
 			)
 
 			if err != nil {
@@ -718,7 +459,7 @@ func listarProyectosWeb(
 					http.StatusInternalServerError,
 					gin.H{
 						"success": false,
-						"message": "No se pudo leer un proyecto.",
+						"message": "Error al leer proyecto",
 						"error":   err.Error(),
 					},
 				)
@@ -726,14 +467,14 @@ func listarProyectosWeb(
 				return
 			}
 
-			item.ImagenURL =
+			proyecto.ImagenURL =
 				"/api/web/proyectos/" +
-					item.ID +
+					proyecto.ID +
 					"/imagen"
 
 			proyectos = append(
 				proyectos,
-				item,
+				proyecto,
 			)
 		}
 
@@ -743,7 +484,7 @@ func listarProyectosWeb(
 				http.StatusInternalServerError,
 				gin.H{
 					"success": false,
-					"message": "Error recorriendo los proyectos.",
+					"message": "Error al recorrer proyectos",
 					"error":   err.Error(),
 				},
 			)
@@ -751,334 +492,39 @@ func listarProyectosWeb(
 			return
 		}
 
+		totalPages := 0
+
+		if total > 0 {
+
+			totalPages =
+				(total + limit - 1) /
+					limit
+		}
+
 		c.JSON(
 			http.StatusOK,
 			gin.H{
 				"success": true,
-				"total":   len(proyectos),
 				"data":    proyectos,
+
+				"pagination": gin.H{
+					"page":        page,
+					"limit":       limit,
+					"total":       total,
+					"total_pages": totalPages,
+				},
 			},
 		)
 	}
 }
 
 /* =========================================================
-   OBTENER PROYECTO
+   CREAR PROYECTO
 ========================================================= */
 
-func obtenerProyectoWeb(
-	db *pgxpool.Pool,
-) gin.HandlerFunc {
+func crearProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 
 	return func(c *gin.Context) {
-
-		id := strings.TrimSpace(
-			c.Param("id"),
-		)
-
-		if id == "" {
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "ID de proyecto requerido.",
-				},
-			)
-
-			return
-		}
-
-		var item ProyectoWeb
-
-		err := db.QueryRow(
-			context.Background(),
-			`
-			SELECT
-				id,
-				codigo,
-				titulo,
-				slug,
-				tipo,
-				ciudad,
-				direccion,
-				etapa,
-
-				dormitorios,
-				metraje_desde,
-				metraje_hasta,
-
-				estado,
-				precio_desde,
-
-				activo,
-				orden,
-
-				imagen_nombre,
-				imagen_tipo,
-				imagen_tamano,
-
-				creado_en,
-				actualizado_en
-
-			FROM proyectos_web
-
-			WHERE id = $1
-			`,
-			id,
-		).Scan(
-			&item.ID,
-			&item.Codigo,
-			&item.Titulo,
-			&item.Slug,
-			&item.Tipo,
-			&item.Ciudad,
-			&item.Direccion,
-			&item.Etapa,
-
-			&item.Dormitorios,
-			&item.MetrajeDesde,
-			&item.MetrajeHasta,
-
-			&item.Estado,
-			&item.PrecioDesde,
-
-			&item.Activo,
-			&item.Orden,
-
-			&item.ImagenNombre,
-			&item.ImagenTipo,
-			&item.ImagenTamano,
-
-			&item.CreadoEn,
-			&item.ActualizadoEn,
-		)
-
-		if err == pgx.ErrNoRows {
-
-			c.JSON(
-				http.StatusNotFound,
-				gin.H{
-					"success": false,
-					"message": "Proyecto no encontrado.",
-				},
-			)
-
-			return
-		}
-
-		if err != nil {
-
-			c.JSON(
-				http.StatusInternalServerError,
-				gin.H{
-					"success": false,
-					"message": "No se pudo obtener el proyecto.",
-					"error":   err.Error(),
-				},
-			)
-
-			return
-		}
-
-		item.ImagenURL =
-			"/api/web/proyectos/" +
-				item.ID +
-				"/imagen"
-
-		c.JSON(
-			http.StatusOK,
-			gin.H{
-				"success": true,
-				"data":    item,
-			},
-		)
-	}
-}
-
-/* =========================================================
-   OBTENER IMAGEN
-========================================================= */
-
-func obtenerImagenProyectoWeb(
-	db *pgxpool.Pool,
-) gin.HandlerFunc {
-
-	return func(c *gin.Context) {
-
-		id := strings.TrimSpace(
-			c.Param("id"),
-		)
-
-		if id == "" {
-
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "ID de proyecto requerido.",
-				},
-			)
-
-			return
-		}
-
-		var (
-			imageData []byte
-			imageType string
-		)
-
-		err := db.QueryRow(
-			context.Background(),
-			`
-			SELECT
-				imagen_data,
-				imagen_tipo
-
-			FROM proyectos_web
-
-			WHERE id = $1
-			`,
-			id,
-		).Scan(
-			&imageData,
-			&imageType,
-		)
-
-		if err == pgx.ErrNoRows {
-
-			c.JSON(
-				http.StatusNotFound,
-				gin.H{
-					"success": false,
-					"message": "Proyecto no encontrado.",
-				},
-			)
-
-			return
-		}
-
-		if err != nil {
-
-			fmt.Println(
-				"Error obteniendo imagen proyecto:",
-				err,
-			)
-
-			c.JSON(
-				http.StatusInternalServerError,
-				gin.H{
-					"success": false,
-					"message": "No se pudo obtener la imagen.",
-					"error":   err.Error(),
-				},
-			)
-
-			return
-		}
-
-		if len(imageData) == 0 {
-
-			c.JSON(
-				http.StatusNotFound,
-				gin.H{
-					"success": false,
-					"message": "El proyecto no tiene una imagen.",
-				},
-			)
-
-			return
-		}
-
-		c.Header(
-			"Cache-Control",
-			"public, max-age=3600",
-		)
-
-		c.Data(
-			http.StatusOK,
-			imageType,
-			imageData,
-		)
-	}
-}
-
-/* =========================================================
-   ACTUALIZAR
-========================================================= */
-
-func actualizarProyectoWeb(
-	db *pgxpool.Pool,
-) gin.HandlerFunc {
-
-	return func(c *gin.Context) {
-
-		id := strings.TrimSpace(
-			c.Param("id"),
-		)
-
-		if id == "" {
-
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "ID de proyecto requerido.",
-				},
-			)
-
-			return
-		}
-
-		/* =========================================
-		   VERIFICAR EXISTENCIA
-		========================================= */
-
-		var existe bool
-
-		err := db.QueryRow(
-			context.Background(),
-			`
-			SELECT EXISTS(
-				SELECT 1
-				FROM proyectos_web
-				WHERE id = $1
-			)
-			`,
-			id,
-		).Scan(
-			&existe,
-		)
-
-		if err != nil {
-
-			c.JSON(
-				http.StatusInternalServerError,
-				gin.H{
-					"success": false,
-					"message": "No se pudo verificar el proyecto.",
-					"error":   err.Error(),
-				},
-			)
-
-			return
-		}
-
-		if !existe {
-
-			c.JSON(
-				http.StatusNotFound,
-				gin.H{
-					"success": false,
-					"message": "Proyecto no encontrado.",
-				},
-			)
-
-			return
-		}
-
-		/* =========================================
-		   CAMPOS
-		========================================= */
 
 		codigo := strings.TrimSpace(
 			c.PostForm("codigo"),
@@ -1108,40 +554,6 @@ func actualizarProyectoWeb(
 			c.PostForm("etapa"),
 		)
 
-		estado := strings.TrimSpace(
-			c.PostForm("estado"),
-		)
-
-		if estado == "" {
-			estado = "disponible"
-		}
-
-		activo := parseBool(
-			c.PostForm("activo"),
-			true,
-		)
-
-		orden := parseInt(
-			c.PostForm("orden"),
-			0,
-		)
-
-		dormitorios := nullableString(
-			c.PostForm("dormitorios"),
-		)
-
-		metrajeDesde := parseNullableFloat(
-			c.PostForm("metraje_desde"),
-		)
-
-		metrajeHasta := parseNullableFloat(
-			c.PostForm("metraje_hasta"),
-		)
-
-		precioDesde := parseNullableFloat(
-			c.PostForm("precio_desde"),
-		)
-
 		if codigo == "" ||
 			titulo == "" ||
 			slug == "" ||
@@ -1154,156 +566,70 @@ func actualizarProyectoWeb(
 				http.StatusBadRequest,
 				gin.H{
 					"success": false,
-					"message": "Completa todos los campos obligatorios.",
+					"message": "Completa todos los campos obligatorios",
 				},
 			)
 
 			return
 		}
 
-		/* =========================================
-		   NUEVA IMAGEN
-		========================================= */
+		/* =====================================================
+		   IMAGEN
+		===================================================== */
 
-		file, header, imageErr := c.Request.FormFile(
+		imagen, err := c.FormFile(
 			"imagen",
 		)
 
-		/* =========================================
-		   SIN NUEVA IMAGEN
-		========================================= */
-
-		if imageErr != nil {
-
-			var item ProyectoWeb
-
-			err := db.QueryRow(
-				context.Background(),
-				`
-				UPDATE proyectos_web
-
-				SET
-					codigo = $1,
-					titulo = $2,
-					slug = $3,
-					tipo = $4,
-					ciudad = $5,
-					direccion = $6,
-					etapa = $7,
-
-					dormitorios = $8,
-					metraje_desde = $9,
-					metraje_hasta = $10,
-
-					estado = $11,
-					precio_desde = $12,
-
-					activo = $13,
-					orden = $14,
-
-					actualizado_en = NOW()
-
-				WHERE id = $15
-
-				RETURNING
-					id,
-					codigo,
-					titulo,
-					slug,
-					tipo,
-					ciudad,
-					direccion,
-					etapa,
-
-					dormitorios,
-					metraje_desde,
-					metraje_hasta,
-
-					estado,
-					precio_desde,
-
-					activo,
-					orden,
-
-					imagen_nombre,
-					imagen_tipo,
-					imagen_tamano,
-
-					creado_en,
-					actualizado_en
-				`,
-				codigo,
-				titulo,
-				slug,
-				tipo,
-				ciudad,
-				direccion,
-				etapa,
-
-				dormitorios,
-				metrajeDesde,
-				metrajeHasta,
-
-				estado,
-				precioDesde,
-
-				activo,
-				orden,
-
-				id,
-			).Scan(
-				&item.ID,
-				&item.Codigo,
-				&item.Titulo,
-				&item.Slug,
-				&item.Tipo,
-				&item.Ciudad,
-				&item.Direccion,
-				&item.Etapa,
-
-				&item.Dormitorios,
-				&item.MetrajeDesde,
-				&item.MetrajeHasta,
-
-				&item.Estado,
-				&item.PrecioDesde,
-
-				&item.Activo,
-				&item.Orden,
-
-				&item.ImagenNombre,
-				&item.ImagenTipo,
-				&item.ImagenTamano,
-
-				&item.CreadoEn,
-				&item.ActualizadoEn,
-			)
-
-			if err != nil {
-
-				c.JSON(
-					http.StatusInternalServerError,
-					gin.H{
-						"success": false,
-						"message": "No se pudo actualizar el proyecto.",
-						"error":   err.Error(),
-					},
-				)
-
-				return
-			}
-
-			item.ImagenURL =
-				"/api/web/proyectos/" +
-					item.ID +
-					"/imagen"
+		if err != nil {
 
 			c.JSON(
-				http.StatusOK,
+				http.StatusBadRequest,
 				gin.H{
-					"success": true,
-					"message": "Proyecto actualizado correctamente.",
-					"data":    item,
+					"success": false,
+					"message": "La imagen es obligatoria",
+				},
+			)
+
+			return
+		}
+
+		if imagen.Size <= 0 {
+
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "La imagen está vacía",
+				},
+			)
+
+			return
+		}
+
+		if imagen.Size >
+			maxProyectoWebImageSize {
+
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "La imagen no puede superar los 5 MB",
+				},
+			)
+
+			return
+		}
+
+		file, err := imagen.Open()
+
+		if err != nil {
+
+			c.JSON(
+				http.StatusInternalServerError,
+				gin.H{
+					"success": false,
+					"message": "No se pudo abrir la imagen",
 				},
 			)
 
@@ -1311,36 +637,6 @@ func actualizarProyectoWeb(
 		}
 
 		defer file.Close()
-
-		/* =========================================
-		   VALIDAR NUEVA IMAGEN
-		========================================= */
-
-		if header.Size <= 0 {
-
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "La imagen está vacía.",
-				},
-			)
-
-			return
-		}
-
-		if header.Size > maxProyectoWebImageSize {
-
-			c.JSON(
-				http.StatusRequestEntityTooLarge,
-				gin.H{
-					"success": false,
-					"message": "La imagen no debe superar los 5 MB.",
-				},
-			)
-
-			return
-		}
 
 		imageData, err := io.ReadAll(
 			io.LimitReader(
@@ -1355,159 +651,192 @@ func actualizarProyectoWeb(
 				http.StatusInternalServerError,
 				gin.H{
 					"success": false,
-					"message": "No se pudo leer la nueva imagen.",
+					"message": "No se pudo leer la imagen",
 				},
 			)
 
 			return
 		}
 
-		if int64(len(imageData)) > maxProyectoWebImageSize {
-
-			c.JSON(
-				http.StatusRequestEntityTooLarge,
-				gin.H{
-					"success": false,
-					"message": "La imagen no debe superar los 5 MB.",
-				},
-			)
-
-			return
-		}
-
-		contentType := http.DetectContentType(
-			imageData,
-		)
-
-		if !imagenProyectoPermitida(contentType) {
+		if int64(len(imageData)) >
+			maxProyectoWebImageSize {
 
 			c.JSON(
 				http.StatusBadRequest,
 				gin.H{
 					"success": false,
-					"message": "La imagen debe ser JPG, PNG o WEBP.",
+					"message": "La imagen no puede superar los 5 MB",
 				},
 			)
 
 			return
 		}
 
-		/* =========================================
-		   UPDATE CON IMAGEN
-		========================================= */
+		contentType :=
+			http.DetectContentType(
+				imageData,
+			)
 
-		var item ProyectoWeb
+		if !imagenProyectoPermitida(
+			contentType,
+		) {
 
-		err = db.QueryRow(
-			context.Background(),
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "Solo se permiten imágenes JPG, PNG o WEBP",
+				},
+			)
+
+			return
+		}
+
+		/* =====================================================
+		   CAMPOS OPCIONALES
+		===================================================== */
+
+		dormitorios :=
+			nullableStringProyecto(
+				c.PostForm("dormitorios"),
+			)
+
+		metrajeDesde :=
+			nullableFloatProyecto(
+				c.PostForm("metraje_desde"),
+			)
+
+		metrajeHasta :=
+			nullableFloatProyecto(
+				c.PostForm("metraje_hasta"),
+			)
+
+		precioDesde :=
+			nullableFloatProyecto(
+				c.PostForm("precio_desde"),
+			)
+
+		estado := strings.TrimSpace(
+			c.DefaultPostForm(
+				"estado",
+				"disponible",
+			),
+		)
+
+		activo := parseBoolProyecto(
+			c.DefaultPostForm(
+				"activo",
+				"true",
+			),
+			true,
+		)
+
+		orden := parseIntProyecto(
+			c.DefaultPostForm(
+				"orden",
+				"0",
+			),
+			0,
+		)
+
+		id := uuid.New()
+
+		/* =====================================================
+		   INSERTAR
+		===================================================== */
+
+		_, err = db.Exec(
+			c,
 			`
-			UPDATE proyectos_web
+			INSERT INTO proyectos_web (
 
-			SET
-				codigo = $1,
-				titulo = $2,
-				slug = $3,
-				tipo = $4,
-				ciudad = $5,
-				direccion = $6,
-				etapa = $7,
-
-				dormitorios = $8,
-				metraje_desde = $9,
-				metraje_hasta = $10,
-
-				estado = $11,
-				precio_desde = $12,
-
-				activo = $13,
-				orden = $14,
-
-				imagen_nombre = $15,
-				imagen_tipo = $16,
-				imagen_tamano = $17,
-				imagen_data = $18,
-
-				actualizado_en = NOW()
-
-			WHERE id = $19
-
-			RETURNING
 				id,
+
 				codigo,
 				titulo,
 				slug,
+
 				tipo,
 				ciudad,
 				direccion,
 				etapa,
 
+				imagen_nombre,
+				imagen_tipo,
+				imagen_tamano,
+				imagen_data,
+
 				dormitorios,
+
 				metraje_desde,
 				metraje_hasta,
 
 				estado,
+
 				precio_desde,
 
 				activo,
-				orden,
+				orden
 
-				imagen_nombre,
-				imagen_tipo,
-				imagen_tamano,
+			)
+			VALUES (
 
-				creado_en,
-				actualizado_en
+				$1,
+
+				$2,
+				$3,
+				$4,
+
+				$5,
+				$6,
+				$7,
+				$8,
+
+				$9,
+				$10,
+				$11,
+				$12,
+
+				$13,
+
+				$14,
+				$15,
+
+				$16,
+
+				$17,
+
+				$18,
+				$19
+			)
 			`,
+			id,
+
 			codigo,
 			titulo,
 			slug,
+
 			tipo,
 			ciudad,
 			direccion,
 			etapa,
 
+			imagen.Filename,
+			contentType,
+			int64(len(imageData)),
+			imageData,
+
 			dormitorios,
+
 			metrajeDesde,
 			metrajeHasta,
 
 			estado,
+
 			precioDesde,
 
 			activo,
 			orden,
-
-			header.Filename,
-			contentType,
-			len(imageData),
-			imageData,
-
-			id,
-		).Scan(
-			&item.ID,
-			&item.Codigo,
-			&item.Titulo,
-			&item.Slug,
-			&item.Tipo,
-			&item.Ciudad,
-			&item.Direccion,
-			&item.Etapa,
-
-			&item.Dormitorios,
-			&item.MetrajeDesde,
-			&item.MetrajeHasta,
-
-			&item.Estado,
-			&item.PrecioDesde,
-
-			&item.Activo,
-			&item.Orden,
-
-			&item.ImagenNombre,
-			&item.ImagenTipo,
-			&item.ImagenTamano,
-
-			&item.CreadoEn,
-			&item.ActualizadoEn,
 		)
 
 		if err != nil {
@@ -1516,7 +845,7 @@ func actualizarProyectoWeb(
 				http.StatusInternalServerError,
 				gin.H{
 					"success": false,
-					"message": "No se pudo actualizar el proyecto.",
+					"message": "No se pudo crear el proyecto",
 					"error":   err.Error(),
 				},
 			)
@@ -1524,17 +853,646 @@ func actualizarProyectoWeb(
 			return
 		}
 
-		item.ImagenURL =
+		c.JSON(
+			http.StatusCreated,
+			gin.H{
+				"success": true,
+				"message": "Proyecto creado correctamente",
+
+				"data": gin.H{
+					"id": id.String(),
+
+					"imagen_url":
+						"/api/web/proyectos/" +
+							id.String() +
+							"/imagen",
+				},
+			},
+		)
+	}
+}
+
+/* =========================================================
+   OBTENER PROYECTO
+========================================================= */
+
+func obtenerProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
+
+	return func(c *gin.Context) {
+
+		id := c.Param("id")
+
+		var proyecto ProyectoWeb
+
+		err := db.QueryRow(
+			c,
+			`
+			SELECT
+
+				id,
+
+				codigo,
+				titulo,
+				slug,
+
+				tipo,
+				ciudad,
+				direccion,
+				etapa,
+
+				COALESCE(imagen_nombre, ''),
+				COALESCE(imagen_tipo, ''),
+				COALESCE(imagen_tamano, 0),
+
+				dormitorios,
+
+				metraje_desde,
+				metraje_hasta,
+
+				estado,
+
+				precio_desde,
+
+				activo,
+				orden,
+
+				creado_en,
+				actualizado_en
+
+			FROM proyectos_web
+
+			WHERE id = $1
+			`,
+			id,
+		).Scan(
+
+			&proyecto.ID,
+
+			&proyecto.Codigo,
+			&proyecto.Titulo,
+			&proyecto.Slug,
+
+			&proyecto.Tipo,
+			&proyecto.Ciudad,
+			&proyecto.Direccion,
+			&proyecto.Etapa,
+
+			&proyecto.ImagenNombre,
+			&proyecto.ImagenTipo,
+			&proyecto.ImagenTamano,
+
+			&proyecto.Dormitorios,
+
+			&proyecto.MetrajeDesde,
+			&proyecto.MetrajeHasta,
+
+			&proyecto.Estado,
+
+			&proyecto.PrecioDesde,
+
+			&proyecto.Activo,
+			&proyecto.Orden,
+
+			&proyecto.CreadoEn,
+			&proyecto.ActualizadoEn,
+		)
+
+		if err != nil {
+
+			if err == pgx.ErrNoRows {
+
+				c.JSON(
+					http.StatusNotFound,
+					gin.H{
+						"success": false,
+						"message": "Proyecto no encontrado",
+					},
+				)
+
+				return
+			}
+
+			c.JSON(
+				http.StatusInternalServerError,
+				gin.H{
+					"success": false,
+					"message": "Error al obtener proyecto",
+					"error":   err.Error(),
+				},
+			)
+
+			return
+		}
+
+		proyecto.ImagenURL =
 			"/api/web/proyectos/" +
-				item.ID +
+				proyecto.ID +
 				"/imagen"
 
 		c.JSON(
 			http.StatusOK,
 			gin.H{
 				"success": true,
-				"message": "Proyecto actualizado correctamente.",
-				"data":    item,
+				"data":    proyecto,
+			},
+		)
+	}
+}
+
+/* =========================================================
+   OBTENER IMAGEN
+========================================================= */
+
+func obtenerImagenProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
+
+	return func(c *gin.Context) {
+
+		id := c.Param("id")
+
+		var imageData []byte
+		var imageType string
+
+		err := db.QueryRow(
+			c,
+			`
+			SELECT
+
+				imagen_data,
+				COALESCE(imagen_tipo, '')
+
+			FROM proyectos_web
+
+			WHERE id = $1
+			`,
+			id,
+		).Scan(
+			&imageData,
+			&imageType,
+		)
+
+		if err != nil {
+
+			if err == pgx.ErrNoRows {
+
+				c.JSON(
+					http.StatusNotFound,
+					gin.H{
+						"success": false,
+						"message": "Proyecto no encontrado",
+					},
+				)
+
+				return
+			}
+
+			c.JSON(
+				http.StatusInternalServerError,
+				gin.H{
+					"success": false,
+					"message": "Error al obtener imagen",
+					"error":   err.Error(),
+				},
+			)
+
+			return
+		}
+
+		if len(imageData) == 0 {
+
+			c.JSON(
+				http.StatusNotFound,
+				gin.H{
+					"success": false,
+					"message": "El proyecto no tiene imagen",
+				},
+			)
+
+			return
+		}
+
+		if imageType == "" {
+
+			imageType =
+				http.DetectContentType(
+					imageData,
+				)
+		}
+
+		c.Header(
+			"Cache-Control",
+			"public, max-age=86400",
+		)
+
+		c.Header(
+			"Content-Disposition",
+			"inline",
+		)
+
+		c.Data(
+			http.StatusOK,
+			imageType,
+			imageData,
+		)
+	}
+}
+
+/* =========================================================
+   ACTUALIZAR PROYECTO
+========================================================= */
+
+func actualizarProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
+
+	return func(c *gin.Context) {
+
+		id := c.Param("id")
+
+		if _, err := uuid.Parse(id); err != nil {
+
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "ID de proyecto inválido",
+				},
+			)
+
+			return
+		}
+
+		codigo := strings.TrimSpace(
+			c.PostForm("codigo"),
+		)
+
+		titulo := strings.TrimSpace(
+			c.PostForm("titulo"),
+		)
+
+		slug := strings.TrimSpace(
+			c.PostForm("slug"),
+		)
+
+		tipo := strings.TrimSpace(
+			c.PostForm("tipo"),
+		)
+
+		ciudad := strings.TrimSpace(
+			c.PostForm("ciudad"),
+		)
+
+		direccion := strings.TrimSpace(
+			c.PostForm("direccion"),
+		)
+
+		etapa := strings.TrimSpace(
+			c.PostForm("etapa"),
+		)
+
+		if codigo == "" ||
+			titulo == "" ||
+			slug == "" ||
+			tipo == "" ||
+			ciudad == "" ||
+			direccion == "" ||
+			etapa == "" {
+
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "Completa todos los campos obligatorios",
+				},
+			)
+
+			return
+		}
+
+		dormitorios :=
+			nullableStringProyecto(
+				c.PostForm("dormitorios"),
+			)
+
+		metrajeDesde :=
+			nullableFloatProyecto(
+				c.PostForm("metraje_desde"),
+			)
+
+		metrajeHasta :=
+			nullableFloatProyecto(
+				c.PostForm("metraje_hasta"),
+			)
+
+		precioDesde :=
+			nullableFloatProyecto(
+				c.PostForm("precio_desde"),
+			)
+
+		estado := strings.TrimSpace(
+			c.DefaultPostForm(
+				"estado",
+				"disponible",
+			),
+		)
+
+		activo := parseBoolProyecto(
+			c.DefaultPostForm(
+				"activo",
+				"true",
+			),
+			true,
+		)
+
+		orden := parseIntProyecto(
+			c.DefaultPostForm(
+				"orden",
+				"0",
+			),
+			0,
+		)
+
+		/* =====================================================
+		   COMPROBAR SI VIENE NUEVA IMAGEN
+		===================================================== */
+
+		imagen,
+		imagenErr := c.FormFile(
+			"imagen",
+		)
+
+		if imagenErr == nil {
+
+			/* =================================================
+			   NUEVA IMAGEN
+			================================================= */
+
+			if imagen.Size <= 0 {
+
+				c.JSON(
+					http.StatusBadRequest,
+					gin.H{
+						"success": false,
+						"message": "La imagen está vacía",
+					},
+				)
+
+				return
+			}
+
+			if imagen.Size >
+				maxProyectoWebImageSize {
+
+				c.JSON(
+					http.StatusBadRequest,
+					gin.H{
+						"success": false,
+						"message": "La imagen no puede superar los 5 MB",
+					},
+				)
+
+				return
+			}
+
+			file, err := imagen.Open()
+
+			if err != nil {
+
+				c.JSON(
+					http.StatusInternalServerError,
+					gin.H{
+						"success": false,
+						"message": "No se pudo abrir la imagen",
+					},
+				)
+
+				return
+			}
+
+			defer file.Close()
+
+			imageData, err := io.ReadAll(
+				io.LimitReader(
+					file,
+					maxProyectoWebImageSize+1,
+				),
+			)
+
+			if err != nil {
+
+				c.JSON(
+					http.StatusInternalServerError,
+					gin.H{
+						"success": false,
+						"message": "No se pudo leer la imagen",
+					},
+				)
+
+				return
+			}
+
+			if int64(len(imageData)) >
+				maxProyectoWebImageSize {
+
+				c.JSON(
+					http.StatusBadRequest,
+					gin.H{
+						"success": false,
+						"message": "La imagen no puede superar los 5 MB",
+					},
+				)
+
+				return
+			}
+
+			contentType :=
+				http.DetectContentType(
+					imageData,
+				)
+
+			if !imagenProyectoPermitida(
+				contentType,
+			) {
+
+				c.JSON(
+					http.StatusBadRequest,
+					gin.H{
+						"success": false,
+						"message": "Solo se permiten imágenes JPG, PNG o WEBP",
+					},
+				)
+
+				return
+			}
+
+			_, err = db.Exec(
+				c,
+				`
+				UPDATE proyectos_web
+
+				SET
+
+					codigo = $1,
+					titulo = $2,
+					slug = $3,
+
+					tipo = $4,
+					ciudad = $5,
+					direccion = $6,
+					etapa = $7,
+
+					imagen_nombre = $8,
+					imagen_tipo = $9,
+					imagen_tamano = $10,
+					imagen_data = $11,
+
+					dormitorios = $12,
+
+					metraje_desde = $13,
+					metraje_hasta = $14,
+
+					estado = $15,
+
+					precio_desde = $16,
+
+					activo = $17,
+					orden = $18,
+
+					actualizado_en = NOW()
+
+				WHERE id = $19
+				`,
+				codigo,
+				titulo,
+				slug,
+
+				tipo,
+				ciudad,
+				direccion,
+				etapa,
+
+				imagen.Filename,
+				contentType,
+				int64(len(imageData)),
+				imageData,
+
+				dormitorios,
+
+				metrajeDesde,
+				metrajeHasta,
+
+				estado,
+
+				precioDesde,
+
+				activo,
+				orden,
+
+				id,
+			)
+
+			if err != nil {
+
+				c.JSON(
+					http.StatusInternalServerError,
+					gin.H{
+						"success": false,
+						"message": "No se pudo actualizar el proyecto",
+						"error":   err.Error(),
+					},
+				)
+
+				return
+			}
+
+		} else {
+
+			/* =================================================
+			   SIN CAMBIAR IMAGEN
+			================================================= */
+
+			_, err := db.Exec(
+				c,
+				`
+				UPDATE proyectos_web
+
+				SET
+
+					codigo = $1,
+					titulo = $2,
+					slug = $3,
+
+					tipo = $4,
+					ciudad = $5,
+					direccion = $6,
+					etapa = $7,
+
+					dormitorios = $8,
+
+					metraje_desde = $9,
+					metraje_hasta = $10,
+
+					estado = $11,
+
+					precio_desde = $12,
+
+					activo = $13,
+					orden = $14,
+
+					actualizado_en = NOW()
+
+				WHERE id = $15
+				`,
+				codigo,
+				titulo,
+				slug,
+
+				tipo,
+				ciudad,
+				direccion,
+				etapa,
+
+				dormitorios,
+
+				metrajeDesde,
+				metrajeHasta,
+
+				estado,
+
+				precioDesde,
+
+				activo,
+				orden,
+
+				id,
+			)
+
+			if err != nil {
+
+				c.JSON(
+					http.StatusInternalServerError,
+					gin.H{
+						"success": false,
+						"message": "No se pudo actualizar el proyecto",
+						"error":   err.Error(),
+					},
+				)
+
+				return
+			}
+		}
+
+		c.JSON(
+			http.StatusOK,
+			gin.H{
+				"success": true,
+				"message": "Proyecto actualizado correctamente",
+
+				"data": gin.H{
+					"id": id,
+
+					"imagen_url":
+						"/api/web/proyectos/" +
+							id +
+							"/imagen",
+				},
 			},
 		)
 	}
@@ -1544,31 +1502,14 @@ func actualizarProyectoWeb(
    ELIMINAR
 ========================================================= */
 
-func eliminarProyectoWeb(
-	db *pgxpool.Pool,
-) gin.HandlerFunc {
+func eliminarProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 
 	return func(c *gin.Context) {
 
-		id := strings.TrimSpace(
-			c.Param("id"),
-		)
-
-		if id == "" {
-
-			c.JSON(
-				http.StatusBadRequest,
-				gin.H{
-					"success": false,
-					"message": "ID de proyecto requerido.",
-				},
-			)
-
-			return
-		}
+		id := c.Param("id")
 
 		result, err := db.Exec(
-			context.Background(),
+			c,
 			`
 			DELETE FROM proyectos_web
 			WHERE id = $1
@@ -1582,7 +1523,7 @@ func eliminarProyectoWeb(
 				http.StatusInternalServerError,
 				gin.H{
 					"success": false,
-					"message": "No se pudo eliminar el proyecto.",
+					"message": "No se pudo eliminar el proyecto",
 					"error":   err.Error(),
 				},
 			)
@@ -1596,7 +1537,7 @@ func eliminarProyectoWeb(
 				http.StatusNotFound,
 				gin.H{
 					"success": false,
-					"message": "Proyecto no encontrado.",
+					"message": "Proyecto no encontrado",
 				},
 			)
 
@@ -1607,7 +1548,7 @@ func eliminarProyectoWeb(
 			http.StatusOK,
 			gin.H{
 				"success": true,
-				"message": "Proyecto eliminado correctamente.",
+				"message": "Proyecto eliminado correctamente",
 			},
 		)
 	}
@@ -1623,69 +1564,54 @@ func imagenProyectoPermitida(
 
 	switch contentType {
 
-	case "image/jpeg":
-		return true
+	case
+		"image/jpeg",
+		"image/png",
+		"image/webp":
 
-	case "image/png":
-		return true
-
-	case "image/webp":
 		return true
 
 	default:
+
 		return false
 	}
 }
 
-func parseInt(
+func parseIntProyecto(
 	value string,
-	defaultValue int,
+	fallback int,
 ) int {
 
-	value = strings.TrimSpace(
-		value,
-	)
-
-	if value == "" {
-		return defaultValue
-	}
-
-	result, err := strconv.Atoi(
+	n, err := strconv.Atoi(
 		value,
 	)
 
 	if err != nil {
-		return defaultValue
+
+		return fallback
 	}
 
-	return result
+	return n
 }
 
-func parseNullableFloat(
+func parseBoolProyecto(
 	value string,
-) *float64 {
+	fallback bool,
+) bool {
 
-	value = strings.TrimSpace(
+	b, err := strconv.ParseBool(
 		value,
-	)
-
-	if value == "" {
-		return nil
-	}
-
-	result, err := strconv.ParseFloat(
-		value,
-		64,
 	)
 
 	if err != nil {
-		return nil
+
+		return fallback
 	}
 
-	return &result
+	return b
 }
 
-func nullableString(
+func nullableStringProyecto(
 	value string,
 ) *string {
 
@@ -1694,8 +1620,35 @@ func nullableString(
 	)
 
 	if value == "" {
+
 		return nil
 	}
 
 	return &value
+}
+
+func nullableFloatProyecto(
+	value string,
+) *float64 {
+
+	value = strings.TrimSpace(
+		value,
+	)
+
+	if value == "" {
+
+		return nil
+	}
+
+	n, err := strconv.ParseFloat(
+		value,
+		64,
+	)
+
+	if err != nil {
+
+		return nil
+	}
+
+	return &n
 }
