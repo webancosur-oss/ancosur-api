@@ -153,7 +153,7 @@ func listarProyectosWeb(db *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		if codigo != "" && !esFiltroTodosProyecto(codigo) {
-			where = append(where, "codigo = "+addArg(codigo))
+			where = append(where, "UPPER(TRIM(codigo)) = UPPER(TRIM("+addArg(codigo)+"))")
 		}
 
 		if slug != "" && !esFiltroTodosProyecto(slug) {
@@ -176,19 +176,19 @@ func listarProyectosWeb(db *pgxpool.Pool) gin.HandlerFunc {
 
 		if estado != "" && !esFiltroTodosProyecto(estado) {
 			estadoNormalizado := normalizarEstadoProyecto(estado)
-			where = append(where, "estado = "+addArg(estadoNormalizado))
+			where = append(where, "LOWER(TRIM(estado)) = LOWER(TRIM("+addArg(estadoNormalizado)+"))")
 		}
 		if tipo != "" {
-			where = append(where, "tipo = "+addArg(tipo))
+			where = append(where, "LOWER(TRIM(tipo)) = LOWER(TRIM("+addArg(tipo)+"))")
 		}
 		if ciudad != "" {
-			where = append(where, "ciudad = "+addArg(ciudad))
+			where = append(where, "LOWER(TRIM(ciudad)) = LOWER(TRIM("+addArg(ciudad)+"))")
 		}
 		if etapa != "" && !esFiltroTodosProyecto(etapa) {
 			if esEtapaFinalizados(etapa) {
-				where = append(where, "etapa IN ('FINALIZADOS', 'ENTREGADO', 'TODOS VENDIDOS')")
+				where = append(where, "UPPER(TRIM(etapa)) IN ('FINALIZADOS', 'ENTREGADO', 'TODOS VENDIDOS')")
 			} else {
-				where = append(where, "etapa = "+addArg(etapa))
+				where = append(where, "UPPER(TRIM(etapa)) = UPPER(TRIM("+addArg(etapa)+"))")
 			}
 		}
 		if activo != "" {
@@ -962,12 +962,6 @@ func resolverRutaWhatsapp(etapa, rutaInput, whatsappInput, slug string) (string,
 func normalizarProyectoRespuesta(proyecto *ProyectoWeb) {
 	if esEtapaFinalizados(proyecto.Etapa) {
 		proyecto.Ruta = ""
-
-		// Compatibilidad con el componente de proyectos entregados:
-		// internamente los estados finales se agrupan como FINALIZADOS,
-		// pero la respuesta conserva ENTREGADO para los consumidores
-		// existentes que ya filtran por esa etapa.
-		proyecto.Etapa = "ENTREGADO"
 	} else if proyecto.Ruta == "" {
 		proyecto.Ruta = "/" + normalizarSlugProyecto(proyecto.Slug)
 	} else {
