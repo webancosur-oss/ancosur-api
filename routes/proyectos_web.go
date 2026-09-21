@@ -32,8 +32,9 @@ type ProyectoWeb struct {
 	Direccion string `json:"direccion"`
 	Etapa     string `json:"etapa"`
 
-	Ruta     string  `json:"ruta"`
-	Whatsapp *string `json:"whatsapp"`
+	Ruta        string  `json:"ruta"`
+	Whatsapp    *string `json:"whatsapp"`
+	ShowroomURL *string `json:"showroom_url"`
 
 	ImagenNombre string `json:"imagen_nombre"`
 	ImagenTipo   string `json:"imagen_tipo"`
@@ -171,6 +172,7 @@ func listarProyectosWeb(db *pgxpool.Pool) gin.HandlerFunc {
 				OR direccion ILIKE `+p+`
 				OR etapa ILIKE `+p+`
 				OR COALESCE(ruta, '') ILIKE `+p+`
+			OR COALESCE(showroom_url, '') ILIKE `+p+`
 			)`)
 		}
 
@@ -230,6 +232,7 @@ func listarProyectosWeb(db *pgxpool.Pool) gin.HandlerFunc {
 				etapa,
 				COALESCE(ruta, ''),
 				whatsapp,
+				showroom_url,
 				COALESCE(imagen_nombre, ''),
 				COALESCE(imagen_tipo, ''),
 				COALESCE(imagen_tamano, 0),
@@ -274,6 +277,7 @@ func listarProyectosWeb(db *pgxpool.Pool) gin.HandlerFunc {
 				&proyecto.Etapa,
 				&proyecto.Ruta,
 				&proyecto.Whatsapp,
+				&proyecto.ShowroomURL,
 				&proyecto.ImagenNombre,
 				&proyecto.ImagenTipo,
 				&proyecto.ImagenTamano,
@@ -360,6 +364,8 @@ func crearProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
+		showroomURL := nullableURLProyecto(c.PostForm("showroom_url"))
+
 		estado := normalizarEstadoProyecto(c.DefaultPostForm("estado", "disponible"))
 		if !estadoProyectoPermitido(estado) {
 			responderMensaje(c, http.StatusBadRequest, "Estado inválido")
@@ -437,6 +443,7 @@ func crearProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 				etapa,
 				ruta,
 				whatsapp,
+				showroom_url,
 				imagen_nombre,
 				imagen_tipo,
 				imagen_tamano,
@@ -456,7 +463,7 @@ func crearProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 			VALUES (
 				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
 				$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-				$21,$22,$23,$24,$25
+				$21,$22,$23,$24,$25,$26
 			)
 			`,
 			id,
@@ -469,6 +476,7 @@ func crearProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 			etapa,
 			nullableStringValue(ruta),
 			whatsapp,
+			showroomURL,
 			nullableStringValue(imageName),
 			nullableStringValue(imageType),
 			nullableInt64Value(int64(len(imageData))),
@@ -498,8 +506,9 @@ func crearProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 				"id":         id.String(),
 				"codigo":     codigo,
 				"slug":       slug,
-				"ruta":       ruta,
-				"whatsapp":   whatsapp,
+				"ruta":         ruta,
+				"whatsapp":     whatsapp,
+				"showroom_url": showroomURL,
 				"imagen_url": "/api/web/proyectos/" + id.String() + "/imagen",
 				"logo_url":   "/api/web/proyectos/" + id.String() + "/logo",
 			},
@@ -664,6 +673,8 @@ func actualizarProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
+		showroomURL := nullableURLProyecto(c.PostForm("showroom_url"))
+
 		estado := normalizarEstadoProyecto(c.DefaultPostForm("estado", "disponible"))
 		if !estadoProyectoPermitido(estado) {
 			responderMensaje(c, http.StatusBadRequest, "Estado inválido")
@@ -746,13 +757,14 @@ func actualizarProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 			"etapa = $7",
 			"ruta = $8",
 			"whatsapp = $9",
-			"dormitorios = $10",
-			"metraje_desde = $11",
-			"metraje_hasta = $12",
-			"estado = $13",
-			"precio_desde = $14",
-			"activo = $15",
-			"orden = $16",
+			"showroom_url = $10",
+			"dormitorios = $11",
+			"metraje_desde = $12",
+			"metraje_hasta = $13",
+			"estado = $14",
+			"precio_desde = $15",
+			"activo = $16",
+			"orden = $17",
 			"updated_at = NOW()",
 		}
 
@@ -766,6 +778,7 @@ func actualizarProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 			etapa,
 			nullableStringValue(ruta),
 			whatsapp,
+			showroomURL,
 			dormitorios,
 			metrajeDesde,
 			metrajeHasta,
@@ -775,7 +788,7 @@ func actualizarProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 			orden,
 		}
 
-		next := 17
+		next := 18
 
 		if hasImage {
 			sets = append(sets,
@@ -834,8 +847,9 @@ func actualizarProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 				"id":         id,
 				"codigo":     codigo,
 				"slug":       slug,
-				"ruta":       ruta,
-				"whatsapp":   whatsapp,
+				"ruta":         ruta,
+				"whatsapp":     whatsapp,
+				"showroom_url": showroomURL,
 				"imagen_url": "/api/web/proyectos/" + id + "/imagen",
 				"logo_url":   "/api/web/proyectos/" + id + "/logo",
 			},
@@ -889,6 +903,7 @@ func buscarProyectoPorID(c *gin.Context, db *pgxpool.Pool, id string) (ProyectoW
 			etapa,
 			COALESCE(ruta, ''),
 			whatsapp,
+			showroom_url,
 			COALESCE(imagen_nombre, ''),
 			COALESCE(imagen_tipo, ''),
 			COALESCE(imagen_tamano, 0),
@@ -919,6 +934,7 @@ func buscarProyectoPorID(c *gin.Context, db *pgxpool.Pool, id string) (ProyectoW
 		&proyecto.Etapa,
 		&proyecto.Ruta,
 		&proyecto.Whatsapp,
+		&proyecto.ShowroomURL,
 		&proyecto.ImagenNombre,
 		&proyecto.ImagenTipo,
 		&proyecto.ImagenTamano,
@@ -1029,6 +1045,17 @@ func nullableWhatsappProyecto(value string) *string {
 	}
 
 	return &result
+}
+
+func nullableURLProyecto(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if !strings.HasPrefix(value, "http://") && !strings.HasPrefix(value, "https://") {
+		return nil
+	}
+	return &value
 }
 
 func nullableStringProyecto(value string) *string {
