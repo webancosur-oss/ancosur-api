@@ -50,7 +50,7 @@ type ProyectoWeb struct {
 	MetrajeDesde *float64 `json:"metraje_desde"`
 	MetrajeHasta *float64 `json:"metraje_hasta"`
 
-	Estado     string   `json:"estado"`
+	Estado      string   `json:"estado"`
 	PrecioDesde *float64 `json:"precio_desde"`
 
 	Activo bool `json:"activo"`
@@ -72,12 +72,12 @@ var etapasProyectoWeb = []string{
 	"LANZAMIENTO",
 	"EN CONSTRUCCIÓN",
 	"ENTREGA INMEDIATA",
-	"ENTREGADO",
-	"TODOS VENDIDOS",
+	"FINALIZADOS",
 }
 
 var estadosProyectoWeb = []string{
 	"disponible",
+	"sin_unidades",
 	"vendido",
 }
 
@@ -136,6 +136,8 @@ func listarProyectosWeb(db *pgxpool.Pool) gin.HandlerFunc {
 		offset := (page - 1) * limit
 
 		buscar := strings.TrimSpace(c.Query("buscar"))
+		codigo := strings.TrimSpace(c.Query("codigo"))
+		slug := strings.TrimSpace(c.Query("slug"))
 		estado := strings.TrimSpace(c.Query("estado"))
 		tipo := strings.TrimSpace(c.Query("tipo"))
 		ciudad := strings.TrimSpace(c.Query("ciudad"))
@@ -148,6 +150,14 @@ func listarProyectosWeb(db *pgxpool.Pool) gin.HandlerFunc {
 		addArg := func(value any) string {
 			args = append(args, value)
 			return "$" + strconv.Itoa(len(args))
+		}
+
+		if codigo != "" && !esFiltroTodosProyecto(codigo) {
+			where = append(where, "codigo = "+addArg(codigo))
+		}
+
+		if slug != "" && !esFiltroTodosProyecto(slug) {
+			where = append(where, "slug = "+addArg(normalizarSlugProyecto(slug)))
 		}
 
 		if buscar != "" {
@@ -164,8 +174,9 @@ func listarProyectosWeb(db *pgxpool.Pool) gin.HandlerFunc {
 			)`)
 		}
 
-		if estado != "" {
-			where = append(where, "estado = "+addArg(estado))
+		if estado != "" && !esFiltroTodosProyecto(estado) {
+			estadoNormalizado := normalizarEstadoProyecto(estado)
+			where = append(where, "estado = "+addArg(estadoNormalizado))
 		}
 		if tipo != "" {
 			where = append(where, "tipo = "+addArg(tipo))
@@ -173,8 +184,12 @@ func listarProyectosWeb(db *pgxpool.Pool) gin.HandlerFunc {
 		if ciudad != "" {
 			where = append(where, "ciudad = "+addArg(ciudad))
 		}
-		if etapa != "" {
-			where = append(where, "etapa = "+addArg(etapa))
+		if etapa != "" && !esFiltroTodosProyecto(etapa) {
+			if esEtapaFinalizados(etapa) {
+				where = append(where, "etapa IN ('FINALIZADOS', 'ENTREGADO', 'TODOS VENDIDOS')")
+			} else {
+				where = append(where, "etapa = "+addArg(etapa))
+			}
 		}
 		if activo != "" {
 			switch strings.ToLower(activo) {
@@ -332,6 +347,8 @@ func crearProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
+		etapa = normalizarEtapaProyecto(etapa)
+
 		ruta, whatsapp, err := resolverRutaWhatsapp(
 			etapa,
 			c.PostForm("ruta"),
@@ -343,12 +360,12 @@ func crearProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		estado := strings.ToLower(strings.TrimSpace(c.DefaultPostForm("estado", "disponible")))
+		estado := normalizarEstadoProyecto(c.DefaultPostForm("estado", "disponible"))
 		if !estadoProyectoPermitido(estado) {
 			responderMensaje(c, http.StatusBadRequest, "Estado inválido")
 			return
 		}
-		if etapa == "ENTREGADO" {
+		if esEtapaFinalizados(etapa) {
 			estado = "vendido"
 		}
 
@@ -634,6 +651,8 @@ func actualizarProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
+		etapa = normalizarEtapaProyecto(etapa)
+
 		ruta, whatsapp, err := resolverRutaWhatsapp(
 			etapa,
 			c.PostForm("ruta"),
@@ -645,12 +664,12 @@ func actualizarProyectoWeb(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		estado := strings.ToLower(strings.TrimSpace(c.DefaultPostForm("estado", "disponible")))
+		estado := normalizarEstadoProyecto(c.DefaultPostForm("estado", "disponible"))
 		if !estadoProyectoPermitido(estado) {
 			responderMensaje(c, http.StatusBadRequest, "Estado inválido")
 			return
 		}
-		if etapa == "ENTREGADO" {
+		if esEtapaFinalizados(etapa) {
 			estado = "vendido"
 		}
 
@@ -924,9 +943,9 @@ func resolverRutaWhatsapp(etapa, rutaInput, whatsappInput, slug string) (string,
 	ruta := strings.TrimSpace(rutaInput)
 	whatsapp := nullableWhatsappProyecto(whatsappInput)
 
-	if etapa == "ENTREGADO" {
+	if esEtapaFinalizados(etapa) {
 		if whatsapp == nil {
-			return "", nil, fmt.Errorf("para un proyecto ENTREGADO debes registrar un número de WhatsApp")
+			return "", nil, fmt.Errorf("para un proyecto FINALIZADO debes registrar un número de WhatsApp")
 		}
 		return "", whatsapp, nil
 	}
@@ -941,8 +960,14 @@ func resolverRutaWhatsapp(etapa, rutaInput, whatsappInput, slug string) (string,
 }
 
 func normalizarProyectoRespuesta(proyecto *ProyectoWeb) {
-	if proyecto.Etapa == "ENTREGADO" {
+	if esEtapaFinalizados(proyecto.Etapa) {
 		proyecto.Ruta = ""
+
+		// Compatibilidad con el componente de proyectos entregados:
+		// internamente los estados finales se agrupan como FINALIZADOS,
+		// pero la respuesta conserva ENTREGADO para los consumidores
+		// existentes que ya filtran por esa etapa.
+		proyecto.Etapa = "ENTREGADO"
 	} else if proyecto.Ruta == "" {
 		proyecto.Ruta = "/" + normalizarSlugProyecto(proyecto.Slug)
 	} else {
@@ -1084,6 +1109,10 @@ func tipoProyectoPermitido(value string) bool {
 }
 
 func etapaProyectoPermitida(value string) bool {
+	if esEtapaFinalizados(value) {
+		return true
+	}
+
 	for _, item := range etapasProyectoWeb {
 		if value == item {
 			return true
@@ -1092,13 +1121,38 @@ func etapaProyectoPermitida(value string) bool {
 	return false
 }
 
+func normalizarEstadoProyecto(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, " ", "_")
+	return value
+}
+
 func estadoProyectoPermitido(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+
 	for _, item := range estadosProyectoWeb {
 		if value == item {
 			return true
 		}
 	}
 	return false
+}
+
+func esFiltroTodosProyecto(value string) bool {
+	v := strings.ToLower(strings.TrimSpace(value))
+	return v == "" || v == "todos" || v == "todo"
+}
+
+func esEtapaFinalizados(value string) bool {
+	v := strings.ToUpper(strings.TrimSpace(value))
+	return v == "FINALIZADOS" || v == "ENTREGADO" || v == "TODOS VENDIDOS"
+}
+
+func normalizarEtapaProyecto(value string) string {
+	if esEtapaFinalizados(value) {
+		return "FINALIZADOS"
+	}
+	return strings.TrimSpace(value)
 }
 
 func validarUUIDProyecto(c *gin.Context) (string, bool) {
