@@ -68,6 +68,7 @@ type CRMResult struct {
 	Success bool
 	LeadID  int64
 	Accion  string
+	Asesor  string
 	Message string
 }
 
@@ -1084,6 +1085,18 @@ func crearFormularioWeb(
 
 		defer updateCancel()
 
+		/*
+			El CRM asigna el asesor por nombre.
+			Se busca en la tabla asesores para
+			guardar su ID en el lead.
+		*/
+		asesorCRMID, asesorCRMNombre :=
+			buscarAsesorPorNombreCRM(
+				updateCtx,
+				db,
+				crmResult.Asesor,
+			)
+
 		_, updateErr :=
 			db.Exec(
 				updateCtx,
@@ -1107,6 +1120,12 @@ func crearFormularioWeb(
 					enviado_crm_en =
 						NOW(),
 
+					asesor_id =
+						COALESCE(
+							NULLIF($5, '')::uuid,
+							asesor_id
+						),
+
 					updated_at =
 						NOW()
 
@@ -1119,6 +1138,7 @@ func crearFormularioWeb(
 				string(
 					responseBody,
 				),
+				asesorCRMID,
 			)
 
 		if updateErr != nil {
@@ -1146,6 +1166,8 @@ func crearFormularioWeb(
 							"lead_id": crmResult.LeadID,
 
 							"accion": crmResult.Accion,
+
+							"asesor": crmResult.Asesor,
 
 							"http_status": crmHTTPResponse.StatusCode,
 
@@ -1176,6 +1198,10 @@ func crearFormularioWeb(
 
 					"estado_crm": "enviado",
 
+					"asesor_id": asesorCRMID,
+
+					"asesor": asesorCRMNombre,
+
 					"crm": gin.H{
 						"success": true,
 
@@ -1185,6 +1211,8 @@ func crearFormularioWeb(
 
 						"accion": crmResult.Accion,
 
+						"asesor": crmResult.Asesor,
+
 						"http_status": crmHTTPResponse.StatusCode,
 
 						"message": crmResult.Message,
@@ -1193,6 +1221,141 @@ func crearFormularioWeb(
 			},
 		)
 	}
+}
+
+/*
+	Busca un asesor activo a partir del
+	nombre que devuelve el CRM (ej: "ALICIA").
+
+	1. Coincidencia exacta del nombre completo.
+	2. Si no hay, coincidencia por primer nombre
+	   o por inicio del nombre completo.
+
+	Ignora mayúsculas y tildes. Si no hay
+	coincidencia o hay más de una, no asigna.
+*/
+func buscarAsesorPorNombreCRM(
+	ctx context.Context,
+	db *pgxpool.Pool,
+	nombreCRM string,
+) (string, string) {
+	buscado :=
+		normalizarNombreAsesor(
+			nombreCRM,
+		)
+
+	if buscado == "" {
+		return "", ""
+	}
+
+	rows, err :=
+		db.Query(
+			ctx,
+			`
+			SELECT
+				id::text,
+				nombres_completos
+			FROM asesores
+			WHERE COALESCE(activo, TRUE) = TRUE
+			`,
+		)
+
+	if err != nil {
+		fmt.Println(
+			"CRM ASESOR: error consultando asesores:",
+			err,
+		)
+
+		return "", ""
+	}
+
+	defer rows.Close()
+
+	var exactos [][2]string
+	var parciales [][2]string
+
+	for rows.Next() {
+		var asesorID, nombre string
+
+		if err := rows.Scan(
+			&asesorID,
+			&nombre,
+		); err != nil {
+			continue
+		}
+
+		normalizado :=
+			normalizarNombreAsesor(
+				nombre,
+			)
+
+		if normalizado == buscado {
+			exactos =
+				append(
+					exactos,
+					[2]string{asesorID, nombre},
+				)
+
+			continue
+		}
+
+		if strings.HasPrefix(
+			normalizado,
+			buscado+" ",
+		) {
+			parciales =
+				append(
+					parciales,
+					[2]string{asesorID, nombre},
+				)
+		}
+	}
+
+	if len(exactos) == 1 {
+		return exactos[0][0], exactos[0][1]
+	}
+
+	if len(exactos) == 0 &&
+		len(parciales) == 1 {
+		return parciales[0][0], parciales[0][1]
+	}
+
+	fmt.Println(
+		"CRM ASESOR: no se pudo asignar",
+		nombreCRM,
+		"- exactos:",
+		len(exactos),
+		"parciales:",
+		len(parciales),
+	)
+
+	return "", ""
+}
+
+var reemplazoTildesAsesor =
+	strings.NewReplacer(
+		"á", "a",
+		"é", "e",
+		"í", "i",
+		"ó", "o",
+		"ú", "u",
+		"ü", "u",
+		"ñ", "n",
+	)
+
+func normalizarNombreAsesor(
+	nombre string,
+) string {
+	return strings.Join(
+		strings.Fields(
+			reemplazoTildesAsesor.Replace(
+				strings.ToLower(
+					nombre,
+				),
+			),
+		),
+		" ",
+	)
 }
 
 /*
@@ -1266,6 +1429,22 @@ func analizarRespuestaCRM(
 	}
 
 	/*
+		Sentinel devuelve accion y asesor
+		en el nivel superior.
+	*/
+	result.Accion =
+		obtenerString(
+			root,
+			"accion",
+		)
+
+	result.Asesor =
+		obtenerString(
+			root,
+			"asesor",
+		)
+
+	/*
 		Buscar ID / acción / success
 		dentro de data.
 	*/
@@ -1291,6 +1470,14 @@ func analizarRespuestaCRM(
 
 			result.Accion =
 				accion
+		}
+
+		if result.Asesor == "" {
+			result.Asesor =
+				obtenerString(
+					data,
+					"asesor",
+				)
 		}
 
 		if message :=
