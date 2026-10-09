@@ -435,7 +435,8 @@ func NewWebPushNotifierDesdeEnv() (*WebPushNotifier, bool) {
 		return nil, false
 	}
 
-	if err := validarClaveBase64(notifier.PrivateKey, 32); err != nil {
+	// La librería puede generar claves privadas de 31 bytes (cero inicial)
+	if err := validarClaveBase64(notifier.PrivateKey, 32, 31); err != nil {
 		log.Println("VAPID_PRIVATE_KEY inválida:", err)
 		return nil, false
 	}
@@ -469,7 +470,7 @@ func decodificarBase64Flexible(
 
 func validarClaveBase64(
 	valor string,
-	bytesEsperados int,
+	bytesEsperados ...int,
 ) error {
 	decodificada, err := decodificarBase64Flexible(valor)
 
@@ -477,15 +478,17 @@ func validarClaveBase64(
 		return err
 	}
 
-	if len(decodificada) != bytesEsperados {
-		return fmt.Errorf(
-			"mide %d bytes, se esperaban %d",
-			len(decodificada),
-			bytesEsperados,
-		)
+	for _, esperado := range bytesEsperados {
+		if len(decodificada) == esperado {
+			return nil
+		}
 	}
 
-	return nil
+	return fmt.Errorf(
+		"mide %d bytes, se esperaban %v",
+		len(decodificada),
+		bytesEsperados,
+	)
 }
 
 /*
