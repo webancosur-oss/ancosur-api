@@ -111,6 +111,167 @@ func RutasFormularios(
 		"/formularios/:id/seguimiento",
 		actualizarSeguimientoFormularioWeb(db),
 	)
+
+	api.PUT(
+		"/formularios/:id/asesor",
+		asignarAsesorFormularioWeb(db),
+	)
+}
+
+type AsignarAsesorRequest struct {
+	AsesorID string `json:"asesor_id"`
+}
+
+/* PUT ASESOR
+ * asesor_id vacío => deja el lead sin asignar.
+ * Solo se permite asignar asesores activos.
+ */
+func asignarAsesorFormularioWeb(
+	db *pgxpool.Pool,
+) gin.HandlerFunc {
+	return func(c *gin.Context) {
+
+		id := strings.TrimSpace(
+			c.Param("id"),
+		)
+
+		if id == "" {
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "El ID del lead es obligatorio.",
+				},
+			)
+
+			return
+		}
+
+		var request AsignarAsesorRequest
+
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(
+				http.StatusBadRequest,
+				gin.H{
+					"success": false,
+					"message": "Los datos enviados no son válidos.",
+					"error":   err.Error(),
+				},
+			)
+
+			return
+		}
+
+		asesorID := strings.TrimSpace(
+			request.AsesorID,
+		)
+
+		ctx, cancel :=
+			context.WithTimeout(
+				c.Request.Context(),
+				8*time.Second,
+			)
+
+		defer cancel()
+
+		asesorNombre := ""
+
+		if asesorID != "" {
+			err :=
+				db.QueryRow(
+					ctx,
+					`
+					SELECT nombres_completos
+					FROM asesores
+					WHERE id = $1::uuid
+						AND deleted_at IS NULL
+						AND COALESCE(activo, TRUE) = TRUE
+					`,
+					asesorID,
+				).Scan(
+					&asesorNombre,
+				)
+
+			if err != nil {
+				c.JSON(
+					http.StatusBadRequest,
+					gin.H{
+						"success": false,
+						"message": "El asesor no existe o no está activo.",
+					},
+				)
+
+				return
+			}
+		}
+
+		var actualizadoID string
+
+		err :=
+			db.QueryRow(
+				ctx,
+				`
+				UPDATE leads_web
+				SET
+					asesor_id =
+						NULLIF($2, '')::uuid,
+
+					updated_at =
+						NOW()
+
+				WHERE id =
+					$1::uuid
+
+				RETURNING id::text
+				`,
+				id,
+				asesorID,
+			).Scan(
+				&actualizadoID,
+			)
+
+		if err != nil {
+
+			if strings.Contains(
+				err.Error(),
+				"no rows",
+			) {
+				c.JSON(
+					http.StatusNotFound,
+					gin.H{
+						"success": false,
+						"message": "El lead no existe.",
+					},
+				)
+
+				return
+			}
+
+			c.JSON(
+				http.StatusInternalServerError,
+				gin.H{
+					"success": false,
+					"message": "No se pudo asignar el asesor.",
+					"error":   err.Error(),
+				},
+			)
+
+			return
+		}
+
+		c.JSON(
+			http.StatusOK,
+			gin.H{
+				"success": true,
+				"message": "Asesor asignado correctamente.",
+				"data": gin.H{
+					"id":        actualizadoID,
+					"asesor_id": asesorID,
+					"asesor":    asesorNombre,
+				},
+			},
+		)
+	}
 }
 
 /* PUT */
