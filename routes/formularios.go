@@ -117,6 +117,8 @@ func RutasFormularios(
 		"/formularios/:id/asesor",
 		asignarAsesorFormularioWeb(db),
 	)
+
+	go asignarAsesoresPendientesCRM(db)
 }
 
 type AsignarAsesorRequest struct {
@@ -1299,10 +1301,16 @@ func buscarAsesorPorNombreCRM(
 			continue
 		}
 
+		/*
+			Parcial: el CRM suele mandar solo el
+			primer nombre o "ALDAIR.G" (nombre + inicial).
+		*/
 		if strings.HasPrefix(
 			normalizado,
 			buscado+" ",
-		) {
+		) ||
+			primerNombreAsesor(normalizado) ==
+				primerNombreAsesor(buscado) {
 			parciales =
 				append(
 					parciales,
@@ -1343,18 +1351,162 @@ var reemplazoTildesAsesor =
 		"ñ", "n",
 	)
 
+/*
+	Minúsculas, sin tildes y sin signos:
+	"ALDAIR.G" => "aldair g".
+*/
 func normalizarNombreAsesor(
 	nombre string,
 ) string {
+	sinTildes :=
+		reemplazoTildesAsesor.Replace(
+			strings.ToLower(
+				nombre,
+			),
+		)
+
+	soloLetras :=
+		strings.Map(
+			func(r rune) rune {
+				if (r >= 'a' && r <= 'z') ||
+					(r >= '0' && r <= '9') {
+					return r
+				}
+
+				return ' '
+			},
+			sinTildes,
+		)
+
 	return strings.Join(
 		strings.Fields(
-			reemplazoTildesAsesor.Replace(
-				strings.ToLower(
-					nombre,
-				),
-			),
+			soloLetras,
 		),
 		" ",
+	)
+}
+
+func primerNombreAsesor(
+	nombreNormalizado string,
+) string {
+	partes :=
+		strings.Fields(
+			nombreNormalizado,
+		)
+
+	if len(partes) == 0 {
+		return ""
+	}
+
+	return partes[0]
+}
+
+/*
+	Asigna el asesor a los leads que ya fueron
+	enviados al CRM pero quedaron sin asesor_id
+	(ej: leads creados antes de la asignación
+	automática). Usa la respuesta CRM guardada.
+	Es idempotente: solo toca leads sin asesor.
+*/
+func asignarAsesoresPendientesCRM(
+	db *pgxpool.Pool,
+) {
+	ctx, cancel :=
+		context.WithTimeout(
+			context.Background(),
+			30*time.Second,
+		)
+
+	defer cancel()
+
+	rows, err :=
+		db.Query(
+			ctx,
+			`
+			SELECT
+				id::text,
+				COALESCE(
+					NULLIF(respuesta_crm->>'asesor', ''),
+					respuesta_crm->'data'->>'asesor',
+					''
+				)
+			FROM leads_web
+			WHERE asesor_id IS NULL
+				AND respuesta_crm IS NOT NULL
+			`,
+		)
+
+	if err != nil {
+		fmt.Println(
+			"CRM ASESOR: error buscando leads pendientes:",
+			err,
+		)
+
+		return
+	}
+
+	type leadPendiente struct {
+		ID        string
+		AsesorCRM string
+	}
+
+	var pendientes []leadPendiente
+
+	for rows.Next() {
+		var lead leadPendiente
+
+		if err := rows.Scan(
+			&lead.ID,
+			&lead.AsesorCRM,
+		); err == nil &&
+			strings.TrimSpace(lead.AsesorCRM) != "" {
+
+			pendientes =
+				append(
+					pendientes,
+					lead,
+				)
+		}
+	}
+
+	rows.Close()
+
+	asignados := 0
+
+	for _, lead := range pendientes {
+		asesorID, _ :=
+			buscarAsesorPorNombreCRM(
+				ctx,
+				db,
+				lead.AsesorCRM,
+			)
+
+		if asesorID == "" {
+			continue
+		}
+
+		if _, err := db.Exec(
+			ctx,
+			`
+			UPDATE leads_web
+			SET
+				asesor_id = $2::uuid,
+				updated_at = NOW()
+			WHERE id = $1::uuid
+				AND asesor_id IS NULL
+			`,
+			lead.ID,
+			asesorID,
+		); err == nil {
+			asignados++
+		}
+	}
+
+	fmt.Println(
+		"CRM ASESOR: leads pendientes asignados:",
+		asignados,
+		"de",
+		len(pendientes),
 	)
 }
 
