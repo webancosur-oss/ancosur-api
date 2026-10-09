@@ -3,11 +3,16 @@ package main
 import (
 	"ancosur-api/config"
 	"ancosur-api/routes"
+	"ancosur-api/services"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -50,6 +55,49 @@ func main() {
 	}
 
 	defer db.Close()
+
+	// =========================================================
+	// NOTIFICACIONES PUSH
+	// =========================================================
+
+	appCtx, stopApp := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+
+	defer stopApp()
+
+	if err := services.AsegurarEsquemaNotificaciones(
+		appCtx,
+		db,
+	); err != nil {
+		log.Fatal(
+			"Error preparando notificaciones: ",
+			err,
+		)
+	}
+
+	workerDone := make(chan struct{})
+
+	if notifier, ok := services.NewWebPushNotifierDesdeEnv(); ok {
+		go func() {
+			defer close(workerDone)
+
+			services.IniciarWorkerNotificaciones(
+				appCtx,
+				db,
+				notifier,
+			)
+		}()
+	} else {
+		close(workerDone)
+
+		log.Println(
+			"Advertencia: faltan VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY o VAPID_SUBJECT. " +
+				"Los avisos push quedarán pendientes hasta configurarlas.",
+		)
+	}
 
 	// =========================================================
 	// GIN
@@ -147,22 +195,57 @@ func main() {
 
 	routes.RutasProyectosWeb(api, db)
 
+	routes.RutasNotificaciones(
+		api,
+		db,
+	)
+
 	// =========================================================
 	// SERVIDOR
 	// =========================================================
 
-	fmt.Println(
-		"Server on port " + appConfig.Port,
+	server := &http.Server{
+		Addr:    ":" + appConfig.Port,
+		Handler: router,
+	}
+
+	go func() {
+		fmt.Println(
+			"Server on port " + appConfig.Port,
+		)
+
+		if err := server.ListenAndServe(); err != nil &&
+			!errors.Is(err, http.ErrServerClosed) {
+
+			log.Fatal(
+				"Error iniciando servidor: ",
+				err,
+			)
+		}
+	}()
+
+	// Railway envía SIGTERM al reiniciar el contenedor
+	<-appCtx.Done()
+
+	log.Println("Apagando servidor...")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(
+		context.Background(),
+		15*time.Second,
 	)
 
-	if err := router.Run(
-		":" + appConfig.Port,
-	); err != nil {
+	defer shutdownCancel()
 
-		log.Fatal(
-			"Error iniciando servidor: ",
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Println(
+			"Error apagando servidor: ",
 			err,
 		)
+	}
+
+	select {
+	case <-workerDone:
+	case <-shutdownCtx.Done():
 	}
 }
 

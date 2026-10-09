@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"ancosur-api/services"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -784,6 +785,25 @@ func crearFormularioWeb(
 			return
 		}
 
+		/*
+			Aviso push al terminar el handler, con lo que
+			se sepa del CRM. Se encola aunque el CRM falle,
+			porque el lead ya está guardado.
+		*/
+		notificacion :=
+			services.LeadWebNotificacion{
+				LeadID:   id,
+				Nombre:   request.Nombre,
+				Proyecto: request.Proyecto,
+				Interes:  request.Interes,
+				AsesorID: request.AsesorID,
+			}
+
+		defer encolarNotificacionLeadWeb(
+			db,
+			&notificacion,
+		)
+
 		/* 2. PREPARAR CRM */
 
 		crmURL :=
@@ -1055,6 +1075,9 @@ func crearFormularioWeb(
 				responseBody,
 			)
 
+		notificacion.AccionCRM =
+			crmResult.Accion
+
 		if !crmResult.Success {
 			guardarCRMError(
 				db,
@@ -1098,6 +1121,14 @@ func crearFormularioWeb(
 				db,
 				crmResult.Asesor,
 			)
+
+		if asesorCRMID != "" {
+			notificacion.AsesorID =
+				asesorCRMID
+
+			notificacion.AsesorNombre =
+				asesorCRMNombre
+		}
 
 		_, updateErr :=
 			db.Exec(
@@ -1221,6 +1252,32 @@ func crearFormularioWeb(
 					},
 				},
 			},
+		)
+	}
+}
+
+func encolarNotificacionLeadWeb(
+	db *pgxpool.Pool,
+	notificacion *services.LeadWebNotificacion,
+) {
+	ctx, cancel :=
+		context.WithTimeout(
+			context.Background(),
+			5*time.Second,
+		)
+
+	defer cancel()
+
+	if _, err :=
+		services.EncolarLeadWeb(
+			ctx,
+			db,
+			*notificacion,
+		); err != nil {
+		fmt.Println(
+			"PUSH: no se pudo encolar el lead",
+			notificacion.LeadID,
+			err,
 		)
 	}
 }

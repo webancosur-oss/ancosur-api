@@ -587,6 +587,7 @@ func (h *UserRoutes) UpdateUser(
 	commandTag, err := h.DB.Exec(
 		c.Request.Context(),
 		`
+			WITH usuario AS (
 			UPDATE usuarios_dashboard
 			SET
 				asesor_id = CASE
@@ -600,6 +601,19 @@ func (h *UserRoutes) UpdateUser(
 				activo = COALESCE($7::boolean, activo),
 				updated_at = NOW()
 			WHERE id = $1::uuid
+			RETURNING id, activo
+			),
+			dispositivos AS (
+				UPDATE notify.push_subscriptions
+				SET
+					is_active = FALSE,
+					updated_at = NOW()
+				WHERE user_id IN (
+					SELECT id FROM usuario WHERE NOT activo
+				)
+					AND is_active
+			)
+			SELECT id FROM usuario
 		`,
 		id,
 		userOptionalString(&newAsesorID),
@@ -682,11 +696,23 @@ func (h *UserRoutes) DarBajaUser(
 	commandTag, err := h.DB.Exec(
 		c.Request.Context(),
 		`
-			UPDATE usuarios_dashboard
-			SET
-				activo = FALSE,
-				updated_at = NOW()
-			WHERE id = $1::uuid
+			WITH usuario AS (
+				UPDATE usuarios_dashboard
+				SET
+					activo = FALSE,
+					updated_at = NOW()
+				WHERE id = $1::uuid
+				RETURNING id
+			),
+			dispositivos AS (
+				UPDATE notify.push_subscriptions
+				SET
+					is_active = FALSE,
+					updated_at = NOW()
+				WHERE user_id IN (SELECT id FROM usuario)
+					AND is_active
+			)
+			SELECT id FROM usuario
 		`,
 		id,
 	)
