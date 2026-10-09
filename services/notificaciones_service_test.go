@@ -111,3 +111,43 @@ func TestArmarPayloadLead(t *testing.T) {
 		t.Errorf("payload repetido inesperado: %s %+v", evento, payload)
 	}
 }
+
+func TestNormalizarSubjectVAPID(t *testing.T) {
+	casos := map[string]string{
+		"mailto:ventas@ancosur.pe":   "ventas@ancosur.pe",
+		" MAILTO:ventas@ancosur.pe ": "ventas@ancosur.pe",
+		"ventas@ancosur.pe":          "ventas@ancosur.pe",
+		"https://ancosur.pe":         "https://ancosur.pe",
+	}
+
+	for entrada, esperado := range casos {
+		if got := normalizarSubjectVAPID(entrada); got != esperado {
+			t.Errorf("normalizarSubjectVAPID(%q) = %q", entrada, got)
+		}
+	}
+}
+
+func TestLimpiarClaveVAPID(t *testing.T) {
+	clave := "BNaaGMAYmWyStMhGBZO7rT9yj9K8sdWIspaXMDJpNu2-ckfCsa2bTNOuq9yRzWgscKCG8V21367DErJ1MYlf-9s"
+
+	casos := []string{
+		clave,
+		" " + clave + "\n",
+		"\"" + clave + "\"",
+		"'" + clave + "'",
+		"VAPID_PUBLIC_KEY=" + clave,
+		"VAPID_PUBLIC_KEY=\"" + clave + "\"",
+	}
+
+	for _, caso := range casos {
+		limpia := LimpiarClaveVAPID(caso, "VAPID_PUBLIC_KEY")
+
+		if limpia != clave {
+			t.Errorf("LimpiarClaveVAPID(%q) = %q", caso, limpia)
+		}
+
+		if err := validarClaveBase64(limpia, 65); err != nil {
+			t.Errorf("clave pública válida rechazada: %v", err)
+		}
+	}
+}

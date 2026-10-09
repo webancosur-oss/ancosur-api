@@ -22,5 +22,5 @@ func main() {
 
 	fmt.Println("VAPID_PUBLIC_KEY=" + publicKey)
 	fmt.Println("VAPID_PRIVATE_KEY=" + privateKey)
-	fmt.Println("VAPID_SUBJECT=mailto:ventas@ancosur.pe")
+	fmt.Println("VAPID_SUBJECT=ventas@ancosur.pe")
 }

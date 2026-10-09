@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -418,9 +419,9 @@ y VAPID_SUBJECT (mailto:...).
 func NewWebPushNotifierDesdeEnv() (*WebPushNotifier, bool) {
 	notifier :=
 		&WebPushNotifier{
-			Subject:    strings.TrimSpace(os.Getenv("VAPID_SUBJECT")),
-			PublicKey:  strings.TrimSpace(os.Getenv("VAPID_PUBLIC_KEY")),
-			PrivateKey: strings.TrimSpace(os.Getenv("VAPID_PRIVATE_KEY")),
+			Subject:    normalizarSubjectVAPID(os.Getenv("VAPID_SUBJECT")),
+			PublicKey:  LimpiarClaveVAPID(os.Getenv("VAPID_PUBLIC_KEY"), "VAPID_PUBLIC_KEY"),
+			PrivateKey: LimpiarClaveVAPID(os.Getenv("VAPID_PRIVATE_KEY"), "VAPID_PRIVATE_KEY"),
 		}
 
 	if notifier.Subject == "" ||
@@ -429,7 +430,81 @@ func NewWebPushNotifierDesdeEnv() (*WebPushNotifier, bool) {
 		return nil, false
 	}
 
+	if err := validarClaveBase64(notifier.PublicKey, 65); err != nil {
+		log.Println("VAPID_PUBLIC_KEY inválida:", err)
+		return nil, false
+	}
+
+	if err := validarClaveBase64(notifier.PrivateKey, 32); err != nil {
+		log.Println("VAPID_PRIVATE_KEY inválida:", err)
+		return nil, false
+	}
+
 	return notifier, true
+}
+
+/*
+Tolera errores comunes al pegar la variable en
+Railway: espacios, comillas o "NOMBRE=" delante.
+*/
+func LimpiarClaveVAPID(
+	valor string,
+	nombre string,
+) string {
+	valor = strings.TrimSpace(valor)
+	valor = strings.TrimPrefix(valor, nombre+"=")
+	valor = strings.Trim(valor, "\"' \t\r\n")
+
+	return valor
+}
+
+func decodificarBase64Flexible(
+	valor string,
+) ([]byte, error) {
+	valor = strings.TrimRight(valor, "=")
+	valor = strings.NewReplacer("+", "-", "/", "_").Replace(valor)
+
+	return base64.RawURLEncoding.DecodeString(valor)
+}
+
+func validarClaveBase64(
+	valor string,
+	bytesEsperados int,
+) error {
+	decodificada, err := decodificarBase64Flexible(valor)
+
+	if err != nil {
+		return err
+	}
+
+	if len(decodificada) != bytesEsperados {
+		return fmt.Errorf(
+			"mide %d bytes, se esperaban %d",
+			len(decodificada),
+			bytesEsperados,
+		)
+	}
+
+	return nil
+}
+
+/*
+webpush-go agrega "mailto:" por su cuenta salvo
+que sea una URL https. Si la variable ya lo trae,
+quedaría "mailto:mailto:..." y el servicio de push
+rechaza la firma (403).
+*/
+func normalizarSubjectVAPID(
+	subject string,
+) string {
+	subject = strings.TrimSpace(subject)
+
+	if len(subject) >= len("mailto:") &&
+		strings.EqualFold(subject[:len("mailto:")], "mailto:") {
+		subject = strings.TrimSpace(subject[len("mailto:"):])
+	}
+
+	return subject
 }
 
 func (n *WebPushNotifier) Send(
@@ -437,6 +512,14 @@ func (n *WebPushNotifier) Send(
 	sub SuscripcionPush,
 	payload []byte,
 ) (ResultadoEnvio, error) {
+	if _, err := decodificarBase64Flexible(sub.P256dh); err != nil {
+		return ResultadoEnvio{}, fmt.Errorf("p256dh de la suscripción inválida: %w", err)
+	}
+
+	if _, err := decodificarBase64Flexible(sub.Auth); err != nil {
+		return ResultadoEnvio{}, fmt.Errorf("auth de la suscripción inválida: %w", err)
+	}
+
 	resp, err :=
 		webpush.SendNotificationWithContext(
 			ctx,
