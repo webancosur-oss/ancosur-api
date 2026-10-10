@@ -308,7 +308,7 @@ func armarPayloadLead(
 
 /*
 PUSH_LEAD_URL permite ajustar la ruta del dashboard.
-Ejemplo: /leads-web/{id}
+Por defecto abre el lead en Fuentes de prospección.
 */
 func URLLeadPush(
 	leadID string,
@@ -319,7 +319,7 @@ func URLLeadPush(
 		)
 
 	if plantilla == "" {
-		plantilla = "/leads/{id}"
+		plantilla = "/dashboard/fuentes-prospeccion?lead={id}"
 	}
 
 	return strings.ReplaceAll(

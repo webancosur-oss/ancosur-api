@@ -95,7 +95,7 @@ func TestArmarPayloadLead(t *testing.T) {
 	if evento != EventoLeadCreado ||
 		payload.Title != "Nuevo lead · Las Colinas de Moro" ||
 		!strings.Contains(payload.Body, "Asesor: Alicia") ||
-		payload.URL != "/leads/abc" ||
+		payload.URL != "/dashboard/fuentes-prospeccion?lead=abc" ||
 		payload.Tag != "lead-abc" {
 		t.Errorf("payload inesperado: %s %+v", evento, payload)
 	}
